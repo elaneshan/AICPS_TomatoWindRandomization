@@ -1,0 +1,54 @@
+from dataclasses import dataclass
+from pxr import Usd
+#  in this file we are just going to be makign a inventory of all of the pedicels and leaves in the cluster for future reference
+
+
+# turn each pedicel into an object that we can just keep populating into
+# rather than having duplicate/ parallel lists
+@dataclass
+class PedicelData:
+    prim: Usd.Prim
+    hinge: tuple = None
+    root: Usd.Prim = None
+
+
+@dataclass
+class LeafData:
+    prim: Usd.Prim
+    root: Usd.Prim = None
+
+
+class PlantRegistry:
+    """Discovers important plant components in the stage."""
+
+    def __init__(self, stage):
+        self.stage = stage
+
+        self.pedicels = [] # [pedicel_1, pedicel_2....] so we can keep track of it and in the 
+        # other files we dont need to traverse the full stage again
+        self.leaves = []
+
+    def build(self):
+        """Populate the registry."""
+
+        self.pedicels.clear()
+        self.leaves.clear()
+
+        for prim in self.stage.Traverse():
+
+            if not prim.IsValid():
+                continue
+
+            name = prim.GetName().lower()
+
+            if name.startswith("pedicel_"):
+                self.pedicels.append(PedicelData(prim))
+
+            elif name == "object_0" and str(prim.GetPath()).startswith("/World/Tomato_Cluster_Assembly"):
+                self.leaves.append(LeafData(prim))
+
+    def summary(self):
+        print("\n===== Plant Registry =====")
+        print(f"Pedicels: {len(self.pedicels)}")
+        print(f"Leaves:   {len(self.leaves)}")
+        print("==========================")
