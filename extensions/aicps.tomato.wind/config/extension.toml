@@ -1,0 +1,12 @@
+[package]
+version = "0.1.0"
+title = "AICPS Tomato Wind Randomization"
+description = "Procedural wind randomization tools for tomato cluster assets."
+category = "Simulation"
+keywords = ["isaacsim", "tomato", "wind", "randomization"]
+
+[python]
+path = "."
+
+[[python.module]]
+name = "aicps.tomato.wind"
