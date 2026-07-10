@@ -6,19 +6,36 @@ from .constants import CONTROLLER_SUFFIX
 
 
 class TransformController:
+    """
+    Builds a temporary rotation root ("controller") above a pedicel so it
+    can be rotated around its hinge point without touching the pedicel's
+    own (fragile, GLTF-imported) xformOp stack directly.
+
+    State now lives on PedicelRigData itself (controller, controller_created,
+    current_angle, original_parent_path) rather than in an internal dict here
+
+    """
+    
     def __init__(self, stage):
         self.stage = stage
         self._active = {}  # controller_path (str) -> original_parent_path
 
     def create_rotation_root(self, pedicel_rig_data):
+        if pedicel_rig_data.controller_created:
+            raise RuntimeError(
+                f"{pedicel_rig_data.prim.GetPath()} already has an active controller. "
+                f"Call reset() before creating a new one."
+            )
+
         pedicel_prim = pedicel_rig_data.prim
         original_path = pedicel_prim.GetPath()
-        original_parent_path = original_path.GetParentPath()
+        original_parent_path = pedicel_rig_data.original_parent_path
         pedicel_name = pedicel_prim.GetName()
 
         controller_path = original_parent_path.AppendChild(
             f"{pedicel_name}{CONTROLLER_SUFFIX}"
         )
+
 
         # Always re-fetch prims fresh from the stage - never reuse a cached
         # Usd.Prim reference across runs, it can go stale after edits.
@@ -47,39 +64,60 @@ class TransformController:
         if not success:
             raise RuntimeError(f"Failed to reparent {original_path} under {controller_path}")
 
+        # we can just update rig data in place
         pedicel_rig_data.prim = self.stage.GetPrimAtPath(new_pedicel_path)
-        self._active[str(controller_path)] = original_parent_path
-        return controller.GetPrim()
+        pedicel_rig_data.controller = controller.GetPrim()
+        pedicel_rig_data.controller_created = True
+        pedicel_rig_data.current_angle = 0.0
 
-    def rotate(self, controller_prim, angle_degrees):
-        xformable = UsdGeom.Xformable(controller_prim)
+        return pedicel_rig_data.controller
+
+    def rotate(self, pedicel_rig_data, angle_degrees):
+        if not pedicel_rig_data.controller_created:
+            raise RuntimeError(
+                f"{pedicel_rig_data.prim.GetPath()} has no active controller. "
+                f"Call create_rotation_root() first."
+            )
+
+        xformable = UsdGeom.Xformable(pedicel_rig_data.controller)
         for op in xformable.GetOrderedXformOps():
             if op.GetOpType() == UsdGeom.XformOp.TypeRotateY:
                 op.Set(angle_degrees)
+                pedicel_rig_data.current_angle = angle_degrees
                 return
-        raise RuntimeError(f"No rotateY op found on {controller_prim.GetPath()}")
+
+        raise RuntimeError(f"No rotateY op found on {pedicel_rig_data.controller.GetPath()}")
 
     def reset(self, pedicel_rig_data):
-        current_path = pedicel_rig_data.prim.GetPath()
-        controller_path = current_path.GetParentPath()
-        original_parent_path = self._active.get(str(controller_path))
-        if original_parent_path is None:
-            raise RuntimeError(f"No active controller found for {current_path}")
+        if not pedicel_rig_data.controller_created:
+            print(f"{pedicel_rig_data.prim.GetPath()} has no active controller - nothing to reset.")
+            return
 
-        self.rotate(self.stage.GetPrimAtPath(controller_path), 0.0)
+        current_path = pedicel_rig_data.prim.GetPath()
+        controller_path = pedicel_rig_data.controller.GetPath()
+        original_parent_path = pedicel_rig_data.original_parent_path
+
+        self.rotate(pedicel_rig_data, 0.0)
 
         restored_path = original_parent_path.AppendChild(pedicel_rig_data.prim.GetName())
-        omni.kit.commands.execute(
+        success, _ = omni.kit.commands.execute(
             "MovePrimCommand",
             path_from=str(current_path),
             path_to=str(restored_path),
-            keep_world_transform=False,  # ops never changed, just move the path back
+            keep_world_transform=False,  # ops were never modified, just move the path back
             stage_or_context=self.stage,
         )
+        if not success:
+            raise RuntimeError(f"Failed to restore {current_path} to {restored_path}")
 
         self.stage.RemovePrim(controller_path)
+
         pedicel_rig_data.prim = self.stage.GetPrimAtPath(restored_path)
-        self._active.pop(str(controller_path), None)
+        pedicel_rig_data.controller = None
+        pedicel_rig_data.controller_created = False
+        pedicel_rig_data.current_angle = 0.0
+
+
 
 _session = {}
 def get_session():

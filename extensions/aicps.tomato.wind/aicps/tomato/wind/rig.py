@@ -19,6 +19,13 @@ class PedicelRigData:
     # if any pedicel rotates sideways, this needs to become computed per-prim.
     rotation_axis: Gf.Vec3d = field(default_factory=lambda: Gf.Vec3d(0, 1, 0))
     affected_parts: List[Usd.Prim] = field(default_factory=list)
+    original_parent_path: Optional[object] = None # this is where the prim lived earlier
+    controller: Optional[Usd.Prim] = None # this is the controller that we will be using to rotate the pedicel
+    controller_created: bool = False # this is a flag to tell us if the controller has been created yet or not
+    current_angle: float = 0.0 # this is the current angle of the pedicel, so we can keep track of it and reset it back to 0 when we are done
+    min_angle: Optional[float] = None # this is the minimum angle that the pedicel can be rotated to, if none then its unconstrained
+    max_angle: Optional[float] = None # this is the maximum angle that the pedicel can be rotated to, if none then its unconstrained
+
 
 @dataclass
 class LeafRigData:
@@ -60,6 +67,7 @@ class PlantRig:
                     prim=pedicel_data.prim,
                     hinge_point=hinge,
                     affected_parts=affected_parts,
+                    original_parent_path=pedicel_data.prim.GetPath().GetParentPath(),
                 )
             )
 
