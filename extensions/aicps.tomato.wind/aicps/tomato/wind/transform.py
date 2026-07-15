@@ -70,6 +70,9 @@ class TransformController:
         pedicel_rig_data.controller_created = True
         pedicel_rig_data.current_angle = 0.0
 
+        # patch: refreshes affected_parts so collison checks against this pedicel dont read stale prim handles from the old path
+        pedicel_rig_data.affected_parts = list(pedicel_rig_data.prim.GetChildren())
+
         return pedicel_rig_data.controller
 
     def rotate(self, pedicel_rig_data, angle_degrees):
@@ -113,6 +116,8 @@ class TransformController:
         self.stage.RemovePrim(controller_path)
 
         pedicel_rig_data.prim = self.stage.GetPrimAtPath(restored_path)
+        # patch
+        pedicel_rig_data.affected_parts = list(pedicel_rig_data.prim.GetChildren())
         pedicel_rig_data.controller = None
         pedicel_rig_data.controller_created = False
         pedicel_rig_data.current_angle = 0.0

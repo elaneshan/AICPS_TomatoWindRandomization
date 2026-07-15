@@ -62,13 +62,23 @@ class CollisionChecker:
         yet per the roadmap (Iteration 2)
     """
 
-    def __init__(self, stage, stem_notable_threshold=0.02):
+    def __init__(self, stage, stem_overlap_threshold=0.15, stem_notable_threshold= 0.02, environment_prim=None):
         self.stage = stage
-        self.stem_notable_threshold = stem_notable_threshold  # fraction of smaller box volume
+        self.stem_overlap_threshold = stem_overlap_threshold  # dead code now stems use mesh distance, kept for compat
+        self.stem_notable_threshold = stem_notable_threshold  # for baseline_report only, not a rejection threshold
         self.bbox_cache = UsdGeom.BBoxCache(
             Usd.TimeCode.Default(),
             [UsdGeom.Tokens.default_],
         )
+
+        self.environment_prim = environment_prim
+        self._environment_points = None
+        if environment_prim is not None:
+            self._environment_points = mesh_distance.get_world_points(environment_prim)
+            if self._environment_points is None:
+                print(f"WARNING: no mesh points found under {environment_prim.GetPath()} - "
+                    f"environment collision checks will be skipped")
+
 
     def world_bounds(self, prim):
         bound = self.bbox_cache.ComputeWorldBound(prim)
@@ -137,6 +147,48 @@ class CollisionChecker:
         if denom <= 0:
             return max(a, b, c)
         return 1.0 / (denom ** 0.5)
+
+
+    def check_environment_collision(self, pedicel, fruit_tolerance=0.009, stem_tolerance=0.009, debug=False):
+        """
+        Checks a pedicel's tomato AND stem segments against the cached
+        static environment (trellis) points. No "natural contact" allowance
+        here, unlike stem-vs-stem - the trellis is a rigid structure, so any
+        real overlap should reject. Both tolerances start equal to the fruit
+        tolerance as a placeholder - NOT yet calibrated. Use the same
+        marker-visualization approach used for fruit/stem tolerances before
+        trusting these numbers (see calibrate_environment_tolerance.py).
+
+        Returns (rejected: bool, info: dict).
+        """
+        if self._environment_points is None:
+            return False, {"skipped": "no environment configured"}
+
+        tomato = find_child_by_prefix(pedicel, "tomato")
+        worst = {"distance": float("inf"), "part": None}
+
+        if tomato is not None:
+            d = mesh_distance.min_distance_from_cached_points(self._environment_points, tomato)
+            if d is not None and d < worst["distance"]:
+                worst = {"distance": d, "part": tomato.GetName(), "tolerance": fruit_tolerance}
+
+        for seg in find_stem_segments(pedicel):
+            d = mesh_distance.min_distance_from_cached_points(self._environment_points, seg)
+            if d is not None and d < worst["distance"]:
+                worst = {"distance": d, "part": seg.GetName(), "tolerance": stem_tolerance}
+
+        if worst["part"] is None:
+            return False, {"skipped": "no tomato or stem parts found"}
+
+        rejected = worst["distance"] < worst["tolerance"]
+        if debug and rejected:
+            print(f"  [TRELLIS REJECT] {pedicel.prim.GetName()} ({worst['part']})")
+            print(f"    distance = {worst['distance']:.5f}  (tolerance = {worst['tolerance']})")
+
+        return rejected, {"trellis_part": worst["part"], "trellis_distance": worst["distance"]}
+
+
+
 
     # replaced
     def check_fruit_collision(self, pedicel_a, pedicel_b, contact_tolerance=0.009, debug=False):

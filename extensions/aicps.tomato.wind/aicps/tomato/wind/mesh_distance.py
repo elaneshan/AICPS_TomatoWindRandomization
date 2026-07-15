@@ -104,3 +104,23 @@ def min_distance(prim_a, prim_b, sample_stride=1):
     diffs = pts_a[:, None, :] - pts_b[None, :, :]
     dists = np.sqrt(np.sum(diffs ** 2, axis=-1))
     return float(dists.min())
+
+def min_distance_from_cached_points(cached_points_a, prim_b, sample_stride=1):
+    """
+    Same as min_distance, but the first mesh's world points are already
+    computed (passed in directly) instead of re-traversing its prim
+    subtree. Use this for checks against a STATIC object (like a
+    trellis) whose points never change between calls - recomputing them
+    every time would be wasted work, especially for a deeply nested
+    hierarchy.
+    """
+    if cached_points_a is None:
+        return None
+    pts_b = get_world_points(prim_b)
+    if pts_b is None:
+        return None
+
+    pts_b = pts_b[::sample_stride]
+    diffs = cached_points_a[:, None, :] - pts_b[None, :, :]
+    dists = np.sqrt(np.sum(diffs ** 2, axis=-1))
+    return float(dists.min())
