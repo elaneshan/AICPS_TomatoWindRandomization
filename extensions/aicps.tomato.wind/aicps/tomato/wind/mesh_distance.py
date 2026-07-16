@@ -25,6 +25,23 @@ def get_world_points_with_provenance(prim):
     return entries
 
 
+def get_combined_world_points(prims):
+    """
+    Concatenates world-space points from multiple separate prims into one
+    array - for treating a group of independent prims (e.g. all 14 leaves)
+    as one static collision target, same idea as get_world_points does
+    for meshes within a single prim's subtree.
+    """
+    all_points = []
+    for prim in prims:
+        pts = get_world_points(prim)
+        if pts is not None:
+            all_points.append(pts)
+    if not all_points:
+        return None
+    return np.concatenate(all_points, axis=0)
+
+
 def min_distance_verbose(prim_a, prim_b, sample_stride=1):
     """
     Returns the true minimum distance PLUS which mesh prim each of the

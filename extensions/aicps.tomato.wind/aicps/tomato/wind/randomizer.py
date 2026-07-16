@@ -31,11 +31,8 @@ def ensure_controller(pedicel_rig_data, controller_tool):
         controller_tool.create_rotation_root(pedicel_rig_data)
 
 
+# updated to check leaves as well
 def check_against_all(rig, checker, pedicel, debug=False):
-    """
-    Checks one pedicel against every OTHER pedicel, plus the static
-    environment (trellis) if the checker has one configured.
-    """
     for other in rig.pedicels:
         if other is pedicel:
             continue
@@ -48,7 +45,14 @@ def check_against_all(rig, checker, pedicel, debug=False):
         if env_rejected:
             return True, {"against": "trellis", **env_info}
 
+    if checker.leaf_prims:
+        leaf_rejected, leaf_info = checker.check_leaf_collision(pedicel, debug=debug)
+        if leaf_rejected:
+            return True, {"against": "leaves", **leaf_info}
+
     return False, None
+
+
 
 
 
