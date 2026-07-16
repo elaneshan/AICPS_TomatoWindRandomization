@@ -6,7 +6,7 @@ import time
 from isaacsim import SimulationApp
 
 # Keep "headless": False so the Omniverse/Isaac Sim GUI pops up and renders
-simulation_app = SimulationApp({"headless": False})
+simulation_app = SimulationApp({"headless": True})
 
 # 2. LATE IMPORTS (Must happen AFTER SimulationApp is initialized)
 import omni.usd

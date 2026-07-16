@@ -60,12 +60,17 @@ def randomize_pedicel(rig, checker, controller_tool, pedicel, max_attempts=20, d
     """
     Reject-and-resample for a single pedicel: try a gaussian-sampled
     angle within its constraint range, accept if no collision, otherwise
-    resample. Falls back to angle 0.0 if max_attempts is exhausted.
+    resample. Falls back to angle 0.0 if max_attempts is exhausted but checks to see is 0 deg is still
+    valid in current environment.
     """
     ensure_controller(pedicel, controller_tool)
 
     min_a = pedicel.min_angle if pedicel.min_angle is not None else -20.0
     max_a = pedicel.max_angle if pedicel.max_angle is not None else 20.0
+
+    # ignore this
+    # best_angle = None
+    # best_violation = float("inf")  # track least-bad rejected candidate, in case nothing clears
 
     for attempt in range(max_attempts):
         angle = sample_angle(min_a, max_a)
@@ -84,10 +89,23 @@ def randomize_pedicel(rig, checker, controller_tool, pedicel, max_attempts=20, d
         if debug:
             print(f"  reject {pedicel.prim.GetName()} @ {angle:.2f} deg (attempt {attempt + 1}): {info}")
 
+    # All sampled angles rejected - check whether 0.0 is ACTUALLY safe against
+    # current (possibly already-moved) neighbors, rather than assuming it is.
     controller_tool.rotate(pedicel, 0.0)
-    if debug:
-        print(f"  FAILED to find valid pose for {pedicel.prim.GetName()} after {max_attempts} attempts - reset to 0.0")
+    rejected_at_rest, info = check_against_all(rig, checker, pedicel, debug=debug)
+
+    if not rejected_at_rest:
+        if debug:
+            print(f"  FAILED to find valid pose for {pedicel.prim.GetName()} after {max_attempts} attempts - reset to 0.0 (verified safe)")
+        return False
+
+    # Even 0.0 is unsafe given current neighbor positions - this pedicel is
+    # effectively boxed in. Flag it loudly rather than silently shipping a
+    # colliding pose.
+    print(f" {pedicel.prim.GetName()}: NO safe angle found, including 0.0 deg, "
+          f"given current neighbor positions. {info}")
     return False
+
 
 def randomize_all(rig, checker, controller_tool, max_attempts=20, seed=None, debug=False):
     """
