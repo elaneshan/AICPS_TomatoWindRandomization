@@ -1,4 +1,4 @@
-from pxr import UsdGeom
+from pxr import UsdGeom, Gf
 import omni.kit.commands
 import omni.usd
 
@@ -47,11 +47,15 @@ class TransformController:
         xformable = UsdGeom.Xformable(controller)
         xformable.ClearXformOpOrder()
 
-        # Standard pivot pattern: translate to pivot, rotate, translate back.
-        # At angle=0 this whole stack collapses to identity.
+        # Edit: for X and Z rotation additions
         xformable.AddTranslateOp(opSuffix="pivot").Set(hinge_local) # move to the hinge
-        xformable.AddRotateYOp() # rotate it
-        xformable.AddTranslateOp(opSuffix="pivot", isInverseOp=True) # move back
+        xformable.AddRotateXYZOp()  # was AddRotateYOp - single op, fixed USD composition
+                             # order (X then Y then Z). NEVER change this once
+                             # poses have been generated with it - swapping to
+                             # RotateZYX etc. silently changes what every
+                             # previously-recorded (x,y,z) tuple actually means.
+        xformable.AddTranslateOp(opSuffix="pivot", isInverseOp=True)
+
 
         new_pedicel_path = controller_path.AppendChild(pedicel_name)
         success, _ = omni.kit.commands.execute(
@@ -68,14 +72,14 @@ class TransformController:
         pedicel_rig_data.prim = self.stage.GetPrimAtPath(new_pedicel_path)
         pedicel_rig_data.controller = controller.GetPrim()
         pedicel_rig_data.controller_created = True
-        pedicel_rig_data.current_angle = 0.0
+        pedicel_rig_data.current_rotation = {"x": 0.0, "y": 0.0, "z": 0.0}
 
         # patch: refreshes affected_parts so collison checks against this pedicel dont read stale prim handles from the old path
         pedicel_rig_data.affected_parts = list(pedicel_rig_data.prim.GetChildren())
 
         return pedicel_rig_data.controller
 
-    def rotate(self, pedicel_rig_data, angle_degrees):
+    def rotate(self, pedicel_rig_data, x_deg=0.0, y_deg=0.0, z_deg=0.0):
         if not pedicel_rig_data.controller_created:
             raise RuntimeError(
                 f"{pedicel_rig_data.prim.GetPath()} has no active controller. "
@@ -84,12 +88,12 @@ class TransformController:
 
         xformable = UsdGeom.Xformable(pedicel_rig_data.controller)
         for op in xformable.GetOrderedXformOps():
-            if op.GetOpType() == UsdGeom.XformOp.TypeRotateY:
-                op.Set(angle_degrees)
-                pedicel_rig_data.current_angle = angle_degrees
+            if op.GetOpType() == UsdGeom.XformOp.TypeRotateXYZ:
+                op.Set(Gf.Vec3f(x_deg, y_deg, z_deg))
+                pedicel_rig_data.current_rotation = {"x": x_deg, "y": y_deg, "z": z_deg}
                 return
 
-        raise RuntimeError(f"No rotateY op found on {pedicel_rig_data.controller.GetPath()}")
+        raise RuntimeError(f"No rotateXYZ op found on {pedicel_rig_data.controller.GetPath()}")
 
     def reset(self, pedicel_rig_data):
         if not pedicel_rig_data.controller_created:
@@ -120,7 +124,7 @@ class TransformController:
         pedicel_rig_data.affected_parts = list(pedicel_rig_data.prim.GetChildren())
         pedicel_rig_data.controller = None
         pedicel_rig_data.controller_created = False
-        pedicel_rig_data.current_angle = 0.0
+        pedicel_rig_data.current_rotation = {"x": 0.0, "y": 0.0, "z": 0.0}
 
 
 

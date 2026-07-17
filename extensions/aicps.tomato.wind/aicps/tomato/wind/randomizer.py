@@ -4,35 +4,40 @@ from .constraints import apply_default_constraints, validate_pedicel_angle
 
 
 def sample_angle(min_angle, max_angle, sigma_fraction=0.4):
-    """
-    Samples an angle from a gaussian centered at the midpoint of
-    [min_angle, max_angle], clipped to stay within range.
-
-    sigma_fraction controls how "wide" the natural spread feels - 0.4
-    means the standard deviation is 40% of the half-range, so most
-    samples land well inside the bounds with only occasional draws near
-    the extremes (which then get clipped, slightly stacking probability
-    right at the edges - fine for this use case, not a concern unless
-    you need a perfectly smooth distribution).
-    """
+    """Unchanged - still samples one axis's angle from a gaussian
+    centered at the midpoint, clipped to range. Called once per axis now."""
     center = (min_angle + max_angle) / 2.0
     half_range = (max_angle - min_angle) / 2.0
     sigma = half_range * sigma_fraction
-
     angle = random.gauss(center, sigma)
     return max(min_angle, min(max_angle, angle))
 
 
+def sample_rotation(pedicel_rig_data):
+    """Samples all three axes together, every call - no staged/partial
+    resampling. Each axis's range comes from its own axis_limits entry,
+    falling back to that axis's default if unset (same convention
+    validate_pedicel_angle already uses)."""
+    from .constraints import _AXIS_DEFAULTS
+
+    angles = {}
+    for axis in ("x", "y", "z"):
+        min_a, max_a = pedicel_rig_data.axis_limits[axis]
+        default_min, default_max = _AXIS_DEFAULTS[axis]
+        min_a = min_a if min_a is not None else default_min
+        max_a = max_a if max_a is not None else default_max
+        angles[axis] = sample_angle(min_a, max_a)
+    return angles
+
 
 def ensure_controller(pedicel_rig_data, controller_tool):
-    """Creates the rotation root if this pedicel doesn't have one yet.
-    Safe to call repeatedly - only acts once per pedicel."""
     if not pedicel_rig_data.controller_created:
         controller_tool.create_rotation_root(pedicel_rig_data)
 
 
-# updated to check leaves as well
 def check_against_all(rig, checker, pedicel, debug=False):
+    """Unchanged - operates purely on world-space geometry after rotation,
+    doesn't need to know how many axes produced the current pose."""
     for other in rig.pedicels:
         if other is pedicel:
             continue
@@ -53,77 +58,51 @@ def check_against_all(rig, checker, pedicel, debug=False):
     return False, None
 
 
-
-
-
 def randomize_pedicel(rig, checker, controller_tool, pedicel, max_attempts=20, debug=False):
-    """
-    Reject-and-resample for a single pedicel: try a gaussian-sampled
-    angle within its constraint range, accept if no collision, otherwise
-    resample. Falls back to angle 0.0 if max_attempts is exhausted but checks to see is 0 deg is still
-    valid in current environment.
-    """
     ensure_controller(pedicel, controller_tool)
 
-    min_a = pedicel.min_angle if pedicel.min_angle is not None else -20.0
-    max_a = pedicel.max_angle if pedicel.max_angle is not None else 20.0
-
-    # ignore this
-    # best_angle = None
-    # best_violation = float("inf")  # track least-bad rejected candidate, in case nothing clears
-
     for attempt in range(max_attempts):
-        angle = sample_angle(min_a, max_a)
+        angles = sample_rotation(pedicel)
 
-        if not validate_pedicel_angle(pedicel, angle):
+        if not all(validate_pedicel_angle(pedicel, axis, a) for axis, a in angles.items()):
             continue
 
-        controller_tool.rotate(pedicel, angle)
+        controller_tool.rotate(pedicel, angles["x"], angles["y"], angles["z"])
         rejected, info = check_against_all(rig, checker, pedicel, debug=debug)
 
         if not rejected:
             if debug:
-                print(f"  ACCEPTED {pedicel.prim.GetName()} @ {angle:.2f} deg (attempt {attempt + 1})")
+                print(f"  ACCEPTED {pedicel.prim.GetName()} @ "
+                      f"x={angles['x']:.2f} y={angles['y']:.2f} z={angles['z']:.2f} deg "
+                      f"(attempt {attempt + 1})")
             return True
 
         if debug:
-            print(f"  reject {pedicel.prim.GetName()} @ {angle:.2f} deg (attempt {attempt + 1}): {info}")
+            print(f"  reject {pedicel.prim.GetName()} @ "
+                  f"x={angles['x']:.2f} y={angles['y']:.2f} z={angles['z']:.2f} deg "
+                  f"(attempt {attempt + 1}): {info}")
 
-    # All sampled angles rejected - check whether 0.0 is ACTUALLY safe against
-    # current (possibly already-moved) neighbors, rather than assuming it is.
-    controller_tool.rotate(pedicel, 0.0)
+    # All sampled attempts rejected - verify (0,0,0) against CURRENT
+    # neighbor state, same fix as the single-axis version (never assume
+    # rest is safe just because it's rest).
+    controller_tool.rotate(pedicel, 0.0, 0.0, 0.0)
     rejected_at_rest, info = check_against_all(rig, checker, pedicel, debug=debug)
-
     if not rejected_at_rest:
         if debug:
-            print(f"  FAILED to find valid pose for {pedicel.prim.GetName()} after {max_attempts} attempts - reset to 0.0 (verified safe)")
+            print(f"  FAILED to find valid pose for {pedicel.prim.GetName()} "
+                  f"after {max_attempts} attempts - reset to (0,0,0) (verified safe)")
         return False
 
-    # Even 0.0 is unsafe given current neighbor positions - this pedicel is
-    # effectively boxed in. Flag it loudly rather than silently shipping a
-    # colliding pose.
-    print(f" {pedicel.prim.GetName()}: NO safe angle found, including 0.0 deg, "
+    print(f"   {pedicel.prim.GetName()}: NO safe pose found, including (0,0,0), "
           f"given current neighbor positions. {info}")
     return False
 
 
 def randomize_all(rig, checker, controller_tool, max_attempts=20, seed=None, debug=False):
-    """
-    Top-level entry point. Applies default constraints if none are set,
-    then randomizes every pedicel in sequence. Order matters: each
-    pedicel's accepted pose is what later pedicels' collision checks
-    see, so results are deterministic given a fixed seed but NOT
-    independent of processing order.
-
-    processiing order is randomized so that a pair that starts in contact doesn't
-    have the same pedicel "fixed" first every time, which would bias the results. Variation is now more evenly spread
-    """
     if seed is not None:
         random.seed(seed)
-    
-    # print(f"Seed: {seed}")
 
-    apply_default_constraints(rig)  # no-op for pedicels that already have constraints set
+    apply_default_constraints(rig)
     processing_order = list(rig.pedicels)
     random.shuffle(processing_order)
     results = {}
@@ -131,7 +110,9 @@ def randomize_all(rig, checker, controller_tool, max_attempts=20, seed=None, deb
         accepted = randomize_pedicel(rig, checker, controller_tool, pedicel, max_attempts=max_attempts, debug=debug)
         results[pedicel.prim.GetName()] = {
             "accepted": accepted,
-            "final_angle": pedicel.current_angle,
+            "final_rotation": dict(pedicel.current_rotation),  # was final_angle
         }
 
     return results
+
+

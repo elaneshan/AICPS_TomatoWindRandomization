@@ -1,12 +1,22 @@
 from dataclasses import dataclass
+from .constants import (
+    DEFAULT_MIN_ANGLE, DEFAULT_MAX_ANGLE,
+    DEFAULT_MIN_ANGLE_X, DEFAULT_MAX_ANGLE_X,
+    DEFAULT_MIN_ANGLE_Z, DEFAULT_MAX_ANGLE_Z,
+)
 
-from .constants import DEFAULT_MIN_ANGLE, DEFAULT_MAX_ANGLE
+_AXIS_DEFAULTS = {
+    "x": (DEFAULT_MIN_ANGLE_X, DEFAULT_MAX_ANGLE_X),
+    "y": (DEFAULT_MIN_ANGLE, DEFAULT_MAX_ANGLE),
+    "z": (DEFAULT_MIN_ANGLE_Z, DEFAULT_MAX_ANGLE_Z),
+}
+
 
 # TODO: we will have to go through and manually check the constraints for each pedicel and leaf and add that value to constants later...
 # built this way to keep it modular and we can chain constraints with collision checks
 # when building the randomizer
 
-
+# not used anymore, but dont delete it yet
 @dataclass
 class RotationConstraint:
     """
@@ -20,55 +30,56 @@ class RotationConstraint:
     def is_valid(self, angle: float) -> bool:
         return self.min_angle <= angle <= self.max_angle
 
-def apply_default_constraints(rig, min_angle=DEFAULT_MIN_ANGLE, max_angle=DEFAULT_MAX_ANGLE, overwrite=False):
-    """
-    Populates min_angle/max_angle on every PedicelRigData in the rig.
-    Set overwrite=True to replace values that are already set.
-    """
+
+
+
+
+
+def apply_default_constraints(rig, overwrite=False):
+    """Populates axis_limits on every PedicelRigData, per axis, using
+    _AXIS_DEFAULTS. Set overwrite=True to replace already-set axes."""
     applied = 0
     for pedicel in rig.pedicels:
-        if pedicel.min_angle is not None and pedicel.max_angle is not None and not overwrite:
-            continue
-        pedicel.min_angle = min_angle
-        pedicel.max_angle = max_angle
-        applied += 1
+        changed = False
+        for axis, (default_min, default_max) in _AXIS_DEFAULTS.items():
+            current_min, current_max = pedicel.axis_limits[axis]
+            if current_min is not None and current_max is not None and not overwrite:
+                continue
+            pedicel.axis_limits[axis] = (default_min, default_max)
+            changed = True
+        if changed:
+            applied += 1
     return applied
 
+
 def apply_per_pedicel_constraints(rig, overrides: dict):
-    """
-    overrides: {"Pedicel_01": (min, max), "Pedicel_08": (-3, 4), ...}
-    Data-driven per-pedicel table (matches the PLANT_CONFIG pattern from
-    the design doc) instead of hardcoding any pedicel-specific logic
-    directly into the constraint class.
-    """
+    """overrides: {"Pedicel_01": {"x": (min,max), "y": (min,max)}, ...}
+    Any axis omitted for a pedicel keeps whatever it already had."""
     applied = []
     for pedicel in rig.pedicels:
         name = pedicel.prim.GetName()
         if name in overrides:
-            pedicel.min_angle, pedicel.max_angle = overrides[name]
+            for axis, limits in overrides[name].items():
+                pedicel.axis_limits[axis] = limits
             applied.append(name)
     return applied
 
-def validate_pedicel_angle(pedicel_rig_data, angle: float) -> bool:
-    """
-    True if angle is within this pedicel's constraint. Falls back to
-    global defaults if no constraint has been assigned yet - constraints
-    should be opt-out (via apply_default_constraints), not silently
-    skipped by omission.
-    """
-    min_a = pedicel_rig_data.min_angle if pedicel_rig_data.min_angle is not None else DEFAULT_MIN_ANGLE
-    max_a = pedicel_rig_data.max_angle if pedicel_rig_data.max_angle is not None else DEFAULT_MAX_ANGLE
+
+def validate_pedicel_angle(pedicel_rig_data, axis: str, angle: float) -> bool:
+    min_a, max_a = pedicel_rig_data.axis_limits[axis]
+    default_min, default_max = _AXIS_DEFAULTS[axis]
+    min_a = min_a if min_a is not None else default_min
+    max_a = max_a if max_a is not None else default_max
     return min_a <= angle <= max_a
 
-def try_rotate(controller_tool, pedicel_rig_data, angle):
-    """
-    Attempts a constrained rotation: validates first, only rotates if
-    accepted. Returns True/False rather than clamping - this is the
-    reject-and-resample shape Phase 5's randomizer will chain constraint
-    checks and collision checks together with, not a fallback clamp.
-    """
-    if not validate_pedicel_angle(pedicel_rig_data, angle):
+
+def try_rotate(controller_tool, pedicel_rig_data, x_deg, y_deg, z_deg):
+    if not all([
+        validate_pedicel_angle(pedicel_rig_data, "x", x_deg),
+        validate_pedicel_angle(pedicel_rig_data, "y", y_deg),
+        validate_pedicel_angle(pedicel_rig_data, "z", z_deg),
+    ]):
         return False
-    controller_tool.rotate(pedicel_rig_data, angle)
+    controller_tool.rotate(pedicel_rig_data, x_deg, y_deg, z_deg)
     return True
 
