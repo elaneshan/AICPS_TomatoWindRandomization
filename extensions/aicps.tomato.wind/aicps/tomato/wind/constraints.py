@@ -34,22 +34,22 @@ class RotationConstraint:
 
 
 
-
 def apply_default_constraints(rig, overwrite=False):
-    """Populates axis_limits on every PedicelRigData, per axis, using
-    _AXIS_DEFAULTS. Set overwrite=True to replace already-set axes."""
     applied = 0
-    for pedicel in rig.pedicels:
+    for item in list(rig.pedicels) + list(rig.leaves):
         changed = False
         for axis, (default_min, default_max) in _AXIS_DEFAULTS.items():
-            current_min, current_max = pedicel.axis_limits[axis]
+            current_min, current_max = item.axis_limits[axis]
             if current_min is not None and current_max is not None and not overwrite:
                 continue
-            pedicel.axis_limits[axis] = (default_min, default_max)
+            item.axis_limits[axis] = (default_min, default_max)
             changed = True
         if changed:
             applied += 1
     return applied
+
+
+
 
 
 def apply_per_pedicel_constraints(rig, overrides: dict):

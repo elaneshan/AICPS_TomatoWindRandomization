@@ -24,6 +24,18 @@ def get_world_points_with_provenance(prim):
             entries.append((np.array([wp[0], wp[1], wp[2]], dtype=np.float64), path_str))
     return entries
 
+def min_distance_between_point_sets(points_a, points_b, sample_stride=1):
+    """Same idea as min_distance_from_cached_points, but neither side
+    needs a live prim - both point sets are already computed. Use for
+    leaf-vs-leaf where both sides move and get recomputed fresh each call."""
+    if points_a is None or points_b is None:
+        return None
+    pts_a = points_a[::sample_stride]
+    pts_b = points_b[::sample_stride]
+    diffs = pts_a[:, None, :] - pts_b[None, :, :]
+    dists = np.sqrt(np.sum(diffs ** 2, axis=-1))
+    return float(dists.min())
+
 
 def get_combined_world_points(prims):
     """

@@ -63,14 +63,11 @@ class CollisionChecker:
     """
 
     def __init__(self, stage, stem_overlap_threshold=0.15, stem_notable_threshold=0.02,
-             environment_prim=None, leaf_prims=None):
+             environment_prim=None, leaf_rig_items=None):
         self.stage = stage
         self.stem_overlap_threshold = stem_overlap_threshold
         self.stem_notable_threshold = stem_notable_threshold
-        self.bbox_cache = UsdGeom.BBoxCache(
-            Usd.TimeCode.Default(),
-            [UsdGeom.Tokens.default_],
-        )
+        self.bbox_cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_])
 
         self.environment_prim = environment_prim
         self._environment_points = None
@@ -80,34 +77,53 @@ class CollisionChecker:
                 print(f"WARNING: no mesh points found under {environment_prim.GetPath()} - "
                     f"environment collision checks will be skipped")
 
-        self.leaf_prims = leaf_prims
-        self._leaf_point_sets = {}
-        if leaf_prims:
-            for leaf_prim in leaf_prims:
-                pts = mesh_distance.get_world_points(leaf_prim)
-                if pts is not None:
-                    self._leaf_point_sets[str(leaf_prim.GetPath())] = pts
-            if not self._leaf_point_sets:
-                print(f"WARNING: no mesh points found under provided leaf_prims - "
-                    f"leaf collision checks will be skipped")
+        # Leaves rotate throughout randomization, so unlike the trellis (static)
+        # we can never snapshot their points once at init. Keep the live
+        # LeafRigData list instead - .prim on each is kept current by
+        # TransformController even after reparenting under a _Controller - and
+        # recompute points fresh on every check.
+        self.leaf_items = leaf_rig_items or []
+
+    def _current_leaf_points(self, exclude_name=None):
+        """Live world-space points for every leaf, recomputed fresh each call.
+        Keyed by leaf NAME, not path - paths change once a leaf is reparented
+        under its _Controller. exclude_name lets a leaf skip checking itself."""
+        result = {}
+
+        print("\n---- CURRENT LEAF POINTS ----")
+
+        for item in self.leaf_items:
+            name = item.prim.GetName()
+
+            if exclude_name is not None and name == exclude_name:
+                print(f"skip {name}")
+                continue
+
+            pts = mesh_distance.get_world_points(item.prim)
+
+            if pts is None:
+                print(f"{name}: NO POINTS")
+            else:
+                print(f"{name}: {len(pts)} points")
+
+                result[name] = pts
+
+        print("-----------------------------\n")
+
+        return result
 
 
     # shared helper for baselines and leaf collision checks
     def _leaf_part_distances(self, pedicel):
-        """Returns {(leaf_path, part_type): distance} for every leaf this
-        pedicel's tomato/stem segments can be measured against. part_type is
-        'fruit' or 'stem'. No entry is created for a leaf/part pair that
-        yields no valid distance - naturally covers pedicels with no nearby
-        leaf at all."""
         result = {}
         tomato = find_child_by_prefix(pedicel, "tomato")
         segments = find_stem_segments(pedicel)
 
-        for leaf_path, points in self._leaf_point_sets.items():
+        for leaf_name, points in self._current_leaf_points().items():
             if tomato is not None:
                 d = mesh_distance.min_distance_from_cached_points(points, tomato)
                 if d is not None:
-                    result[(leaf_path, "fruit")] = d
+                    result[(leaf_name, "fruit")] = d
 
             if segments:
                 seg_dists = [
@@ -116,11 +132,9 @@ class CollisionChecker:
                 ]
                 seg_dists = [d for d in seg_dists if d is not None]
                 if seg_dists:
-                    result[(leaf_path, "stem")] = min(seg_dists)
+                    result[(leaf_name, "stem")] = min(seg_dists)
 
         return result
-
-
 
     def world_bounds(self, prim):
         bound = self.bbox_cache.ComputeWorldBound(prim)
@@ -189,6 +203,29 @@ class CollisionChecker:
         if denom <= 0:
             return max(a, b, c)
         return 1.0 / (denom ** 0.5)
+
+    def check_leaf_environment_collision(self, leaf_item, tolerance=0.009, debug=False):
+        """Leaf vs static trellis. Leaf points recomputed live (leaves move);
+        trellis points stay cached from init (trellis is static)."""
+        if self._environment_points is None:
+            return False, {"skipped": "no environment configured"}
+
+        leaf_points = mesh_distance.get_world_points(leaf_item.prim)
+        if leaf_points is None:
+            return False, {"skipped": "no mesh points found on this leaf"}
+
+        d = mesh_distance.min_distance_from_cached_points(self._environment_points, leaf_item.prim)
+        if d is None:
+            return False, {"skipped": "no valid distance computed"}
+
+        rejected = d < tolerance
+        if debug and rejected:
+            print(f"  [TRELLIS REJECT] {leaf_item.prim.GetName()}")
+            print(f"    distance = {d:.5f}  (tolerance = {tolerance})")
+
+        return rejected, {"trellis_distance": d}
+
+
 
 
     def check_environment_collision(self, pedicel, fruit_tolerance=0.009, stem_tolerance=0.009, debug=False):
@@ -306,18 +343,31 @@ class CollisionChecker:
                 if d_ba is not None:
                     self._baseline_cross_distance[(b.prim.GetName(), a.prim.GetName())] = d_ba
 
-        # {(pedicel_name, leaf_path, part_type): distance}
+        # {(pedicel_name, leaf_name, part_type): distance}
         self._baseline_leaf_distance = {}
-        if self._leaf_point_sets:
+        if self.leaf_items:
             for pedicel in rig.pedicels:
-                for (leaf_path, part_type), d in self._leaf_part_distances(pedicel).items():
-                    self._baseline_leaf_distance[(pedicel.prim.GetName(), leaf_path, part_type)] = d
+                for (leaf_name, part_type), d in self._leaf_part_distances(pedicel).items():
+                    self._baseline_leaf_distance[(pedicel.prim.GetName(), leaf_name, part_type)] = d
+
+        self._baseline_leaf_leaf_distance = {}
+        if self.leaf_items:
+            leaf_points_by_name = self._current_leaf_points()
+            names = list(leaf_points_by_name.keys())
+            for i, name_a in enumerate(names):
+                for name_b in names[i + 1:]:
+                    d = mesh_distance.min_distance_between_point_sets(
+                        leaf_points_by_name[name_a], leaf_points_by_name[name_b]
+                    )
+                    if d is not None:
+                        self._baseline_leaf_leaf_distance[frozenset([name_a, name_b])] = d
+
 
 
     def check_leaf_collision(self, pedicel, fruit_tolerance=0.009, stem_tolerance=0.009,
-                          relative_margin=0.001, debug=False):
-        if not self._leaf_point_sets:
-            return False, {"skipped": "no leaf points configured"}
+                      relative_margin=0.001, debug=False):
+        if not self.leaf_items:
+            return False, {"skipped": "no leaf items configured"}
 
         baselines = getattr(self, "_baseline_leaf_distance", {})
         current = self._leaf_part_distances(pedicel)
@@ -325,12 +375,12 @@ class CollisionChecker:
         if not current:
             return False, {"skipped": "no tomato or stem parts found near any leaf"}
 
-        worst = None  # tracks the most severe rejection, if any
-        closest = None  # tracks the closest pair overall, for info even if not rejected
+        worst = None
+        closest = None
 
-        for (leaf_path, part_type), d in current.items():
+        for (leaf_name, part_type), d in current.items():
             tolerance = fruit_tolerance if part_type == "fruit" else stem_tolerance
-            baseline = baselines.get((pedicel.prim.GetName(), leaf_path, part_type))
+            baseline = baselines.get((pedicel.prim.GetName(), leaf_name, part_type))
 
             if baseline is not None and baseline < tolerance:
                 rejected_here = d < baseline - relative_margin
@@ -338,25 +388,26 @@ class CollisionChecker:
                 rejected_here = d < tolerance
 
             if closest is None or d < closest["distance"]:
-                closest = {"distance": d, "part": part_type, "leaf": leaf_path, "baseline": baseline}
-
+                closest = {"distance": d, "part": part_type, "leaf": leaf_name, "baseline": baseline}
             if rejected_here and (worst is None or d < worst["distance"]):
-                worst = {"distance": d, "part": part_type, "leaf": leaf_path, "baseline": baseline}
+                worst = {"distance": d, "part": part_type, "leaf": leaf_name, "baseline": baseline}
 
         rejected = worst is not None
         info = worst if rejected else closest
         info = {
             "leaf_part": info["part"],
-            "leaf_path": info["leaf"],
+            "leaf_name": info["leaf"],
             "leaf_distance": info["distance"],
             "baseline": info["baseline"],
         }
 
         if debug and rejected:
-            print(f"  [LEAF REJECT] {pedicel.prim.GetName()} ({info['leaf_part']} vs {info['leaf_path'].split('/')[-6]})  "
+            print(f"  [LEAF REJECT] {pedicel.prim.GetName()} ({info['leaf_part']} vs {info['leaf_name']})  "
                 f"distance={info['leaf_distance']:.5f}  baseline={info['baseline']}")
 
         return rejected, info
+
+
 
 
 
@@ -391,18 +442,65 @@ class CollisionChecker:
 
     def baseline_report(self, rig, debug=False):
         print("\n===== Baseline Collision Report (current pose) =====")
+
         any_rejected = False
+
+        print("\nChecking pedicel-pedicel collisions...")
         for i, pedicel_a in enumerate(rig.pedicels):
             for pedicel_b in rig.pedicels[i + 1:]:
-                rejected, info = self.check_pedicel_pair(pedicel_a, pedicel_b, debug=debug)
+                rejected, info = self.check_pedicel_pair(
+                    pedicel_a,
+                    pedicel_b,
+                    debug=debug
+                )
                 if rejected:
                     any_rejected = True
-                    print(f"  REJECT: {pedicel_a.prim.GetName()} <-> {pedicel_b.prim.GetName()}  {info}")
-                elif info["stem_min_distance"] is not None and info["stem_min_distance"] < self.stem_notable_threshold:
-                    print(f"  ok (stem close but not rejected): {pedicel_a.prim.GetName()} <-> {pedicel_b.prim.GetName()}  distance={info['stem_min_distance']:.5f}")
+                    print(
+                        f"  REJECT: {pedicel_a.prim.GetName()} "
+                        f"<-> {pedicel_b.prim.GetName()}  {info}"
+                    )
+                elif (
+                    info["stem_min_distance"] is not None
+                    and info["stem_min_distance"] < self.stem_notable_threshold
+                ):
+                    print(
+                        f"  ok (stem close but not rejected): "
+                        f"{pedicel_a.prim.GetName()} "
+                        f"<-> {pedicel_b.prim.GetName()} "
+                        f"distance={info['stem_min_distance']:.5f}"
+                    )
+
+        print("\nChecking leaf-pedicel collisions...")
+        for pedicel in rig.pedicels:
+            rejected, info = self.check_leaf_collision(
+                pedicel,
+                debug=debug
+            )
+            if rejected:
+                any_rejected = True
+                print(
+                    f"  REJECT: leaf vs {pedicel.prim.GetName()}  {info}"
+                )
+
+        print("\nChecking leaf-leaf collisions...")
+        for leaf in self.leaf_items:
+            rejected, info = self.check_leaf_leaf_collision(
+                leaf,
+                debug=debug
+            )
+            if rejected:
+                any_rejected = True
+                print(
+                    f"  REJECT: {leaf.prim.GetName()} "
+                    f"<-> {info['leaf_name']}  {info}"
+                )
+
+
         if not any_rejected:
             print("  No rejections.")
+
         print("======================================================\n")
+
         return any_rejected
 
 
@@ -466,4 +564,60 @@ class CollisionChecker:
             "cross_min_distance": cross_distance,
         }
 
+
+    def check_leaf_leaf_collision(self, leaf_item, tolerance=0.009, relative_margin=0.001, debug=False):
+        """Leaf-vs-leaf. Same reject-below-tolerance-unless-naturally-touching
+        pattern as fruit/stem. Both sides recomputed live every call."""
+        print(f"\n===== LEAF CHECK {leaf_item.prim.GetName()} =====")
+        if not self.leaf_items:
+            return False, {"skipped": "no leaf items configured"}
+
+        this_name = leaf_item.prim.GetName()
+        this_points = mesh_distance.get_world_points(leaf_item.prim)
+        if this_points is None:
+            return False, {"skipped": "no mesh points found on this leaf"}
+
+        others = self._current_leaf_points(exclude_name=this_name)
+        print(f"{len(others)} other leaves")
+        if not others:
+            return False, {"skipped": "no other leaves to check against"}
+
+        baselines = getattr(self, "_baseline_leaf_leaf_distance", {})
+        worst = None
+        closest = None
+
+        for other_name, other_points in others.items():
+            d = mesh_distance.min_distance_between_point_sets(this_points, other_points)
+            if d is None:
+                continue
+
+            key = frozenset([this_name, other_name])
+            baseline = baselines.get(key)
+
+            if baseline is not None and baseline < tolerance:
+                rejected_here = d < baseline - relative_margin
+            else:
+                rejected_here = d < tolerance
+
+            if closest is None or d < closest["distance"]:
+                closest = {"distance": d, "leaf": other_name, "baseline": baseline}
+            if rejected_here and (worst is None or d < worst["distance"]):
+                worst = {"distance": d, "leaf": other_name, "baseline": baseline}
+
+        rejected = worst is not None
+        info = worst if rejected else closest
+        if info is None:
+            return False, {"skipped": "no valid distances computed"}
+
+        info = {"leaf_name": info["leaf"], "leaf_distance": info["distance"], "baseline": info["baseline"]}
+
+        if debug and rejected:
+            print(f"  [LEAF-LEAF REJECT] {this_name} <-> {info['leaf_name']}  "
+                f"distance={info['leaf_distance']:.5f}  baseline={info['baseline']}")
+        
+        print(
+            f"RESULT: rejected={rejected} "
+            f"closest={info}"
+        )
+        return rejected, info
 
