@@ -90,13 +90,13 @@ class CollisionChecker:
         under its _Controller. exclude_name lets a leaf skip checking itself."""
         result = {}
 
-        print("\n---- CURRENT LEAF POINTS ----")
+        # print("\n---- CURRENT LEAF POINTS ----")
 
         for item in self.leaf_items:
             name = item.prim.GetName()
 
             if exclude_name is not None and name == exclude_name:
-                print(f"skip {name}")
+                # print(f"skip {name}")
                 continue
 
             pts = mesh_distance.get_world_points(item.prim)
@@ -104,11 +104,9 @@ class CollisionChecker:
             if pts is None:
                 print(f"{name}: NO POINTS")
             else:
-                print(f"{name}: {len(pts)} points")
-
                 result[name] = pts
 
-        print("-----------------------------\n")
+        # print("-----------------------------\n")
 
         return result
 
@@ -268,7 +266,7 @@ class CollisionChecker:
 
     # fruit vs stem collisions checker
     def check_cross_stem_fruit_collision(self, pedicel_a, pedicel_b, contact_tolerance=0.009,
-                                       relative_margin=0.001, debug=False):
+                                       relative_margin_ratio=0.25, debug=False):
         tomato_a = find_child_by_prefix(pedicel_a, "tomato")
         tomato_b = find_child_by_prefix(pedicel_b, "tomato")
         segments_a = find_stem_segments(pedicel_a)
@@ -295,11 +293,10 @@ class CollisionChecker:
             (pedicel_a.prim.GetName(), pedicel_b.prim.GetName())
         )
 
-        if baseline is not None and baseline < contact_tolerance:
-            rejected = worst["distance"] < baseline - relative_margin
+        if baseline is not None:
+            rejected = worst["distance"] < baseline * (1.0 - relative_margin_ratio)
         else:
             rejected = worst["distance"] < contact_tolerance
-
         if debug and rejected:
             print(f"  [CROSS STEM/FRUIT REJECT] {pedicel_a.prim.GetName()} <-> {pedicel_b.prim.GetName()}")
             print(f"    {worst['pair']}: distance = {worst['distance']:.5f}  baseline={baseline}")
@@ -365,7 +362,7 @@ class CollisionChecker:
 
 
     def check_leaf_collision(self, pedicel, fruit_tolerance=0.009, stem_tolerance=0.009,
-                      relative_margin=0.001, debug=False):
+                      relative_margin_ratio=0.25, debug=False):
         if not self.leaf_items:
             return False, {"skipped": "no leaf items configured"}
 
@@ -382,8 +379,8 @@ class CollisionChecker:
             tolerance = fruit_tolerance if part_type == "fruit" else stem_tolerance
             baseline = baselines.get((pedicel.prim.GetName(), leaf_name, part_type))
 
-            if baseline is not None and baseline < tolerance:
-                rejected_here = d < baseline - relative_margin
+            if baseline is not None:
+                rejected_here = d < baseline * (1.0 - relative_margin_ratio)
             else:
                 rejected_here = d < tolerance
 
@@ -409,11 +406,67 @@ class CollisionChecker:
 
 
 
+    def check_leaf_against_own_pedicel(self, leaf_item, pedicel, fruit_tolerance=0.009, stem_tolerance=0.009,
+                                    relative_margin_ratio=0.25, debug=False):
+        """Leaf vs its own paired pedicel's fruit/stem, checked from the leaf's
+        side. check_leaf_collision only ever runs during the PEDICEL's turn in
+        randomize_all - before a coupled leaf has moved to pedicel_y + flutter. This re-validates that final coupled position. Reuses
+        baselines from capture_baselines rather than recomputing."""
+        leaf_points = mesh_distance.get_world_points(leaf_item.prim)
+        if leaf_points is None:
+            return False, {"skipped": "no mesh points found on this leaf"}
+
+        tomato = find_child_by_prefix(pedicel, "tomato")
+        segments = find_stem_segments(pedicel)
+        baselines = getattr(self, "_baseline_leaf_distance", {})
+        pedicel_name = pedicel.prim.GetName()
+        leaf_name = leaf_item.prim.GetName()
+
+        candidates = {}
+        if tomato is not None:
+            d = mesh_distance.min_distance_from_cached_points(leaf_points, tomato)
+            if d is not None:
+                candidates["fruit"] = d
+        if segments:
+            seg_dists = [mesh_distance.min_distance_from_cached_points(leaf_points, seg) for seg in segments]
+            seg_dists = [d for d in seg_dists if d is not None]
+            if seg_dists:
+                candidates["stem"] = min(seg_dists)
+
+        if not candidates:
+            return False, {"skipped": "no tomato or stem parts found on paired pedicel"}
+
+        worst = None
+        closest = None
+        for part_type, d in candidates.items():
+            tolerance = fruit_tolerance if part_type == "fruit" else stem_tolerance
+            baseline = baselines.get((pedicel_name, leaf_name, part_type))
+            # rejected_here = (d < baseline - relative_margin) if (baseline is not None and baseline < tolerance) else (d < tolerance)
+            if baseline is not None:
+                rejected_here = d < baseline * (1.0 - relative_margin_ratio)
+            else:
+                rejected_here = d < tolerance
+            if closest is None or d < closest["distance"]:
+                closest = {"distance": d, "part": part_type, "baseline": baseline}
+            if rejected_here and (worst is None or d < worst["distance"]):
+                worst = {"distance": d, "part": part_type, "baseline": baseline}
+
+        rejected = worst is not None
+        info = worst if rejected else closest
+        info = {"pedicel_part": info["part"], "pedicel_name": pedicel_name,
+                "distance": info["distance"], "baseline": info["baseline"]}
+
+        if debug and rejected:
+            print(f"  [LEAF-OWN-PEDICEL REJECT] {leaf_name} ({info['pedicel_part']} vs {pedicel_name})  "
+                f"distance={info['distance']:.5f}  baseline={info['baseline']}")
+
+        return rejected, info
+
 
 
 
     # replaced
-    def check_fruit_collision(self, pedicel_a, pedicel_b, contact_tolerance=0.009, relative_margin=0.001, debug=False):
+    def check_fruit_collision(self, pedicel_a, pedicel_b, contact_tolerance=0.009, relative_margin_ratio=0.25, debug=False):
         tomato_a = find_child_by_prefix(pedicel_a, "tomato")
         tomato_b = find_child_by_prefix(pedicel_b, "tomato")
         if tomato_a is None or tomato_b is None:
@@ -427,9 +480,10 @@ class CollisionChecker:
         key = frozenset([pedicel_a.prim.GetName(), pedicel_b.prim.GetName()])
         baseline = getattr(self, "_baseline_fruit_distance", {}).get(key)
 
-        if baseline is not None and baseline < contact_tolerance:
-            # Naturally touching at rest - only reject if wind makes it WORSE.
-            rejected = distance < baseline - relative_margin
+        if baseline is not None:
+            # Naturally touching at rest - only reject if wind makes it WORSE. 
+            # scaled to this pairs own rest distance
+            rejected = distance < baseline * (1.0 - relative_margin_ratio)
         else:
             rejected = distance < contact_tolerance
 
@@ -565,7 +619,7 @@ class CollisionChecker:
         }
 
 
-    def check_leaf_leaf_collision(self, leaf_item, tolerance=0.009, relative_margin=0.001, debug=False):
+    def check_leaf_leaf_collision(self, leaf_item, tolerance=0.009, relative_margin_ratio=0.25, debug=False):
         """Leaf-vs-leaf. Same reject-below-tolerance-unless-naturally-touching
         pattern as fruit/stem. Both sides recomputed live every call."""
         print(f"\n===== LEAF CHECK {leaf_item.prim.GetName()} =====")
@@ -594,14 +648,14 @@ class CollisionChecker:
             key = frozenset([this_name, other_name])
             baseline = baselines.get(key)
 
-            if baseline is not None and baseline < tolerance:
-                rejected_here = d < baseline - relative_margin
+            if baseline is not None:
+                rejected = d < baseline * (1.0 - relative_margin_ratio)
             else:
-                rejected_here = d < tolerance
+                rejected = d < tolerance
 
             if closest is None or d < closest["distance"]:
                 closest = {"distance": d, "leaf": other_name, "baseline": baseline}
-            if rejected_here and (worst is None or d < worst["distance"]):
+            if rejected and (worst is None or d < worst["distance"]):
                 worst = {"distance": d, "leaf": other_name, "baseline": baseline}
 
         rejected = worst is not None

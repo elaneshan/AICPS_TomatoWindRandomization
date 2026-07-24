@@ -34,7 +34,8 @@ def ensure_controller(rig_item, controller_tool):
     if not rig_item.controller_created:
         controller_tool.create_rotation_root(rig_item)
 
-def sample_rotation(rig_item, coupled_pedicel=None, flutter_sigma_fraction=0.15):
+# flutter will be around 1.75 degrees with gausian 
+def sample_rotation(rig_item, coupled_pedicel=None, flutter_sigma_fraction=0.52):
     """Samples all three axes. If coupled_pedicel is given, the y axis
     is NOT an independent draw — it's the paired pedicel's current y
     plus a small independent flutter, clamped to this item's own y range."""
@@ -91,6 +92,15 @@ def check_against_all(rig, checker, rig_item, debug=False):
         env_rejected, env_info = checker.check_leaf_environment_collision(rig_item, debug=debug)
         if env_rejected:
             return True, {"against": "trellis", **env_info}
+    # Check against own pedicel (coupling)
+    if not is_pedicel and rig_item.paired_pedicel_name:
+        pedicel_lookup = next((p for p in rig.pedicels if p.prim.GetName() == rig_item.paired_pedicel_name), None)
+        if pedicel_lookup is not None:
+            own_rejected, own_info = checker.check_leaf_against_own_pedicel(rig_item, pedicel_lookup, debug=debug)
+            if own_rejected:
+                return True, {"against": rig_item.paired_pedicel_name, **own_info}
+
+    
 
     return False, None
 
@@ -99,6 +109,8 @@ def check_against_all(rig, checker, rig_item, debug=False):
 
 
 def randomize_item(rig, checker, controller_tool, rig_item, max_attempts=20, debug=False, coupled_pedicel=None):
+    from .constraints import _AXIS_DEFAULTS
+
     ensure_controller(rig_item, controller_tool)
 
     for attempt in range(max_attempts):
@@ -122,17 +134,31 @@ def randomize_item(rig, checker, controller_tool, rig_item, max_attempts=20, deb
                   f"x={angles['x']:.2f} y={angles['y']:.2f} z={angles['z']:.2f} deg "
                   f"(attempt {attempt + 1}): {info}")
 
-    controller_tool.rotate(rig_item, 0.0, 0.0, 0.0)
+    # Fallback. Coupled leaves fall back to their pedicel's CURRENT y with
+    # zero flutter, not global (0,0,0) rest
+    if coupled_pedicel is not None:
+        min_y, max_y = rig_item.axis_limits["y"]
+        default_min, default_max = _AXIS_DEFAULTS["y"]
+        min_y = min_y if min_y is not None else default_min
+        max_y = max_y if max_y is not None else default_max
+        fallback_y = max(min_y, min(max_y, coupled_pedicel.current_rotation["y"]))
+        controller_tool.rotate(rig_item, 0.0, fallback_y, 0.0)
+    else:
+        controller_tool.rotate(rig_item, 0.0, 0.0, 0.0)
+
     rejected_at_rest, info = check_against_all(rig, checker, rig_item, debug=debug)
     if not rejected_at_rest:
         if debug:
             print(f"  FAILED to find valid pose for {rig_item.prim.GetName()} "
-                  f"after {max_attempts} attempts - reset to (0,0,0) (verified safe)")
+                  f"after {max_attempts} attempts - reset to fallback (verified safe)")
         return False
 
-    print(f"   {rig_item.prim.GetName()}: NO safe pose found, including (0,0,0), "
+    print(f"   {rig_item.prim.GetName()}: NO safe pose found, including fallback, "
           f"given current neighbor positions. {info}")
     return False
+
+
+
 
 
 

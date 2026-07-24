@@ -56,10 +56,11 @@ class PlantRig:
   everything downstream (rig_builder, randomizer) will consume.
   """
 
-  def __init__(self, stage):
+  def __init__(self, stage, leaf_pairing_overrides=None):
       self.stage = stage
       self.registry = PlantRegistry(stage)
       self.pivot_finder = PivotFinder(stage)
+      self.leaf_pairing_overrides = leaf_pairing_overrides or {} # {"foliage_leaf_01": "pedicel_01"}
 
       self.pedicels: List[PedicelRigData] = []
       self.leaves: List[LeafRigData] = []
@@ -166,7 +167,11 @@ class PlantRig:
       # rest-pose value, so this is safe as long as it's computed from
       # hinge_point (never from live geometry) and cached like everything else.
       for leaf_data in self.leaves:
-        existing = self._previous_leaf_data.get(leaf_data.prim.GetName())
+        name = leaf_data.prim.GetName()
+        if name in self.leaf_pairing_overrides:
+            leaf_data.paired_pedicel_name = self.leaf_pairing_overrides[name]
+            continue
+        existing = self._previous_leaf_data.get(name)
         if existing and existing.paired_pedicel_name:
             leaf_data.paired_pedicel_name = existing.paired_pedicel_name
         elif self.pedicels:
@@ -175,6 +180,9 @@ class PlantRig:
                 key=lambda p: (p.hinge_point - leaf_data.hinge_point).GetLength(),
             )
             leaf_data.paired_pedicel_name = nearest.prim.GetName()
+
+
+
 
 
 
