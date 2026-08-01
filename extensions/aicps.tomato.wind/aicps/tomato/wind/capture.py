@@ -9,8 +9,7 @@ Classes for the batch: fruit_ripe, fruit_partial, fruit_unripe, pedicel, leaf.
                into one class in the SEMANTIC output (instance output will
                still show them as separate instances - that's expected)
  - leaf     -> each leaf prim
-
-rachis is NOT labeled yet
+ -rachis    -> the main rachis stem
 """
 import os
 import omni.replicator.core as rep
@@ -58,9 +57,9 @@ def label_scene_for_segmentation(rig):
         leaf_count += 1
 
     # rachis: add here, e.g.
-    # rachis_prim = rig.stage.GetPrimAtPath("/World/Tomato_Cluster_Assembly/Peduncle/Rachis")
-    # if rachis_prim.IsValid():
-    #     add_labels(rachis_prim, labels=["rachis"], instance_name="class")
+    rachis_prim = rig.stage.GetPrimAtPath("/World/Tomato_Cluster_Assembly/Peduncle/Rachis")
+    if rachis_prim.IsValid():
+        add_labels(rachis_prim, labels=["rachis"], instance_name="class")
 
     print(
         f"Labeled: {fruit_counts['fruit_ripe']} ripe, {fruit_counts['fruit_partial']} partial, "

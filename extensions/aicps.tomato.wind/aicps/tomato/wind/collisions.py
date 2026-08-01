@@ -622,7 +622,7 @@ class CollisionChecker:
     def check_leaf_leaf_collision(self, leaf_item, tolerance=0.009, relative_margin_ratio=0.25, debug=False):
         """Leaf-vs-leaf. Same reject-below-tolerance-unless-naturally-touching
         pattern as fruit/stem. Both sides recomputed live every call."""
-        print(f"\n===== LEAF CHECK {leaf_item.prim.GetName()} =====")
+        # print(f"\n===== LEAF CHECK {leaf_item.prim.GetName()} =====")
         if not self.leaf_items:
             return False, {"skipped": "no leaf items configured"}
 
@@ -632,7 +632,7 @@ class CollisionChecker:
             return False, {"skipped": "no mesh points found on this leaf"}
 
         others = self._current_leaf_points(exclude_name=this_name)
-        print(f"{len(others)} other leaves")
+        # print(f"{len(others)} other leaves")
         if not others:
             return False, {"skipped": "no other leaves to check against"}
 
@@ -669,9 +669,9 @@ class CollisionChecker:
             print(f"  [LEAF-LEAF REJECT] {this_name} <-> {info['leaf_name']}  "
                 f"distance={info['leaf_distance']:.5f}  baseline={info['baseline']}")
         
-        print(
-            f"RESULT: rejected={rejected} "
-            f"closest={info}"
-        )
+        # print(
+        #     f"RESULT: rejected={rejected} "
+        #     f"closest={info}"
+        # )
         return rejected, info
 
