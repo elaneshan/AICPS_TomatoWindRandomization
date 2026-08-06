@@ -16,7 +16,9 @@ import os
 import random
 import math
 import omni.usd as usd
-from pxr import UsdGeom, Gf, Usd
+from pxr import UsdGeom as UsdGeom
+from pxr import Gf as Gf
+from pxr import Usd as Usd
 
 
 
@@ -35,6 +37,12 @@ stage = usd.get_context().get_stage()
 CLUSTER_PATH = "/World/Cluster/Tomato_Cluster/Tomato_Cluster_Assembly"
 LINK6_PATH = "/World/cr3/Geometry/world/dummy_link/base_link/Link1/Link2/Link3/Link4/Link5/Link6"
 ROBOT_BASE_PATH = "/World/cr3/Geometry/world/dummy_link/base_link"
+
+
+# NOTE: this constant is now vestigial -- CAMERA_LOCAL_TO_LINK6 below is
+# re-derived from the live stage every run, which is what actually gets
+# used. Left in only so nothing else in the file breaks if it's referenced
+# elsewhere; not a source of truth anymore (hasn't been since the v11 fix).
 CAMERA_LOCAL_OFFSET = Gf.Vec3d(0.0, 0.0, 0.05)
 
 
@@ -62,7 +70,10 @@ if not cluster_prim.IsValid():
 if not robot_base_prim.IsValid():
     raise RuntimeError(f"No prim at {ROBOT_BASE_PATH}")
 
-CAMERA_PATH = f"{LINK6_PATH}/WristCamera"
+
+# UPDATED: camera is now EyeInHand_Camera (mounted on/near the gripper
+# housing), not WristCamera (the old Link6-only mount from v8/v9).
+CAMERA_PATH = f"{LINK6_PATH}/EyeInHand_Camera"
 camera_prim = stage.GetPrimAtPath(CAMERA_PATH)
 link6_prim = stage.GetPrimAtPath(LINK6_PATH)
 if not camera_prim.IsValid():
@@ -70,16 +81,14 @@ if not camera_prim.IsValid():
 if not link6_prim.IsValid():
     raise RuntimeError(f"No prim at {LINK6_PATH}")
 
-# Real, current local transform of WristCamera relative to Link6, read
-# from the stage rather than assumed. This was previously assumed to be
-# translate-only/identity-rotation (old CAMERA_LOCAL_OFFSET), which broke
-# silently once the camera's orientation was hand-fixed directly in the
-# viewport without this script being told. Re-deriving it fresh here
-# means a future mount adjustment self-corrects instead of going stale
-# again the same way.
+
+# Real, current local transform of the camera relative to Link6, read
+# from the stage rather than assumed. Re-deriving it fresh here means
+# today's new mount offset/rotation is picked up automatically.
 cam_to_world_at_load = UsdGeom.Xformable(camera_prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
 link6_to_world_at_load = UsdGeom.Xformable(link6_prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
 CAMERA_LOCAL_TO_LINK6 = cam_to_world_at_load * link6_to_world_at_load.GetInverse()
+
 
 print(f"[seed={SEED}] Camera local-to-Link6 (re-derived from stage this run):")
 print(f"  translate: {CAMERA_LOCAL_TO_LINK6.ExtractTranslation()}")
@@ -109,9 +118,6 @@ print(f"[seed={SEED}] Robot base position: {robot_base_pos}")
 
 
 
-# Build a local frame anchored on the real cluster->robot direction,
-# projected flat (horizontal) so "forward" doesn't tilt oddly based on
-# the base's height vs the cluster's height.
 to_robot = Gf.Vec3d(robot_base_pos[0] - cluster_center[0],
                      robot_base_pos[1] - cluster_center[1], 0.0)
 if to_robot.GetLength() < 1e-6:
@@ -132,10 +138,12 @@ def sample_camera_pose():
     az = math.radians(az_deg)
     el = math.radians(el_deg)
 
+
     offset = (dist * math.cos(el) * math.cos(az)) * forward \
              + (dist * math.cos(el) * math.sin(az)) * right \
              + (dist * math.sin(el)) * up
     cam_pos = cluster_center + offset
+
 
     view_matrix = Gf.Matrix4d().SetLookAt(cam_pos, cluster_center, WORLD_UP)
     cam_to_world = view_matrix.GetInverse()
@@ -143,14 +151,8 @@ def sample_camera_pose():
 
 
 
-def link6_target_from_camera_pose(cam_to_world):
-    """Back-solves the Link6 target pose for a desired camera world pose,
-    using the REAL measured camera->Link6 transform (position AND
-    rotation), not an assumed offset.
 
-    cam_to_world = CAMERA_LOCAL_TO_LINK6 * link6_to_world   (USD row-vector convention)
-    => link6_to_world = CAMERA_LOCAL_TO_LINK6^-1 * cam_to_world
-    """
+def link6_target_from_camera_pose(cam_to_world):
     link6_to_world = CAMERA_LOCAL_TO_LINK6.GetInverse() * cam_to_world
     link6_pos = link6_to_world.ExtractTranslation()
     link6_rot = link6_to_world.ExtractRotationMatrix()
@@ -159,10 +161,8 @@ def link6_target_from_camera_pose(cam_to_world):
 
 
 
-
 print(f"\n{'#':<4}{'cam_pos':<40}{'dist':<8}{'link6_pos'}")
 print("-" * 95)
-
 
 
 results = []
@@ -170,16 +170,17 @@ for i in range(N_SAMPLES):
     cam_pos, cam_to_world, dist, az_deg, el_deg = sample_camera_pose()
     link6_pos, link6_rot, link6_to_world = link6_target_from_camera_pose(cam_to_world)
 
-    # Full round-trip check through the REAL measured offset, not the
-    # old idealized-offset formula.
+
     reconstructed_cam_to_world = CAMERA_LOCAL_TO_LINK6 * link6_to_world
     position_error = (reconstructed_cam_to_world.ExtractTranslation() - cam_pos).GetLength()
+
 
     forward_axis = cam_to_world.TransformDir(Gf.Vec3d(0, 0, -1)).GetNormalized()
     reconstructed_forward = reconstructed_cam_to_world.TransformDir(Gf.Vec3d(0, 0, -1)).GetNormalized()
     orientation_error_deg = math.degrees(math.acos(
         max(-1.0, min(1.0, Gf.Dot(forward_axis, reconstructed_forward)))
     ))
+
 
     results.append({
         "cam_pos": cam_pos, "link6_pos": link6_pos, "link6_rot": link6_rot,
@@ -190,19 +191,10 @@ for i in range(N_SAMPLES):
     })
 
 
-
-
-
-
-
 max_pos_error = max(r["position_check_error"] for r in results)
 max_orient_error = max(r["orientation_check_error_deg"] for r in results)
 print(f"\n[seed={SEED}] Max position sanity check error: {max_pos_error:.8f}")
 print(f"[seed={SEED}] Max orientation sanity check error: {max_orient_error:.4f} deg")
-
-
-
-
 
 
 if PLACE_DEBUG_SPHERES:
@@ -221,7 +213,7 @@ if PLACE_DEBUG_SPHERES:
     robot_marker = UsdGeom.Sphere.Define(stage, f"{DEBUG_ROOT}/robot_base")
     robot_marker.GetRadiusAttr().Set(0.015)
     UsdGeom.Xformable(robot_marker).AddTranslateOp().Set(robot_base_pos)
-    robot_marker.CreateDisplayColorAttr([(0.0, 0.0, 1.0)])  # blue = robot base
+    robot_marker.CreateDisplayColorAttr([(0.0, 0.0, 1.0)])
     print(f"\nDebug spheres at {DEBUG_ROOT} - yellow=candidate cams, red=cluster center, blue=robot base")
 
 

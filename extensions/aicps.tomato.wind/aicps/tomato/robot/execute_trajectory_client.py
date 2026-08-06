@@ -10,14 +10,6 @@ that requires going through MoveGroupInterface's plan()/plan_and_execute()
 with a populated planning scene instead. Do not treat "this script works"
 as "collision avoidance is done."
 
-NOT YET CONFIRMED: the action name below is inferred from the standard
-MoveIt ros2_control naming convention (<controller_name>/follow_joint_trajectory),
-not confirmed against the actual moveit_controllers.yaml. Confirm this
-before trusting a hang/timeout as meaningful -- an action client that
-can't find its server will just sit there, not raise a clear error.
-
-Run with dry_run=True first (default in __main__) to confirm the action
-server is reachable before ever commanding real motion.
 """
 import glob
 import json
