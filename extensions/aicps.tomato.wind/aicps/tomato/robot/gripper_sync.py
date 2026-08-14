@@ -50,11 +50,19 @@ FOLLOWER_NAMES_IN_DOF_ORDER = [
 ]
 FOLLOWER_DOF_INDICES = [7, 8, 9, 10, 11, 12, 13]
 
-# Drive tuning -- currently copied from the master's own confirmed-working
-# values. NOT yet independently validated for followers under real load.
-# See the drive-sweep test (separate script) before trusting these long-term.
-DRIVE_STIFFNESS = 2000.0
-DRIVE_DAMPING = 200.0
+# Drive tuning -- empirically validated (2026-08-13 drive sweep, this session).
+# Finding: behavior is governed by the damping:stiffness RATIO, not absolute
+# magnitude. Every candidate tested at ratio=0.1 (50/5 up through 4000/400)
+# converged with zero overshoot and an identical 0.8s settle time. Ratio=0.2
+# (tested at both 2000/400 and 25/5) consistently degraded settle time to
+# 1.3s and introduced a small nonzero final error (~0.002 deg) -- confirmed
+# twice, at very different absolute magnitudes, so this is a real effect of
+# the ratio, not noise. 500/50 chosen as a value with margin on both sides
+# within the confirmed-good range (tested a full decade below it at 50/5
+# with identical results). Real hardware may need retuning -- sim doesn't
+# model friction/backlash, only revisit if physical behavior differs.
+DRIVE_STIFFNESS = 500.0
+DRIVE_DAMPING = 50.0
 DRIVE_MAX_FORCE = 100000.0
 
 FRAMES_TO_WAIT_AFTER_PLAY = 5  # matches the proven-working isolated test
@@ -207,4 +215,3 @@ def open_gripper():
 def close_gripper():
     """Convenience wrapper: fully closed (0.0 deg, confirmed by viewport)."""
     set_gripper_target_deg(0.0)
-
