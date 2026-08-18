@@ -50,6 +50,7 @@ CAMERA_LOCAL_OFFSET = Gf.Vec3d(0.0, 0.0, 0.05)
 
 DIST_RANGE = (0.15, 0.45)
 AZIMUTH_RANGE_DEG = (-60, 60)     # relative to the cluster->robot direction, not world X
+AZIMUTH_DEADZONE_DEG = (-20, 20)  # avoid sampling directly in front of the robot, where it can't see the cluster
 ELEVATION_RANGE_DEG = (-10, 20)   # tightened - v1's 40deg max clipped into the trellis
 WORLD_UP = Gf.Vec3d(0, 0, 1)
 
@@ -57,7 +58,7 @@ WORLD_UP = Gf.Vec3d(0, 0, 1)
 
 
 N_SAMPLES = 10
-PLACE_DEBUG_SPHERES = True
+PLACE_DEBUG_SPHERES = False  # set True to visualize sampled camera positions in the stage
 DEBUG_ROOT = "/World/_PoseSamplerDebug"
 
 
@@ -73,8 +74,10 @@ if not robot_base_prim.IsValid():
 
 # UPDATED: camera is now EyeInHand_Camera (mounted on/near the gripper
 # housing), not WristCamera (the old Link6-only mount from v8/v9).
-CAMERA_PATH = f"{LINK6_PATH}/EyeInHand_Camera"
+CAMERA_PATH = "/World/cr3/Geometry/world/dummy_link/base_link/Link1/Link2/Link3/Link4/Link5/Link6/Gripper/Geometry/gripper_base_link/EyeInHand_Camera"
 camera_prim = stage.GetPrimAtPath(CAMERA_PATH)
+camera = UsdGeom.Camera(camera_prim)
+camera.GetFocalLengthAttr().Set(12.5)  # override the default 50mm to match the real camera
 link6_prim = stage.GetPrimAtPath(LINK6_PATH)
 if not camera_prim.IsValid():
     raise RuntimeError(f"No prim at {CAMERA_PATH}")
@@ -132,22 +135,26 @@ print(f"[seed={SEED}] Local frame - forward (toward robot): {forward}")
 
 
 def sample_camera_pose():
-    dist = random.uniform(*DIST_RANGE)
-    az_deg = random.uniform(*AZIMUTH_RANGE_DEG)
-    el_deg = random.uniform(*ELEVATION_RANGE_DEG)
-    az = math.radians(az_deg)
-    el = math.radians(el_deg)
+   dist = random.uniform(*DIST_RANGE)
+   el_deg = random.uniform(*ELEVATION_RANGE_DEG)
+
+   az_deg = random.uniform(*AZIMUTH_RANGE_DEG)
+   while AZIMUTH_DEADZONE_DEG[0] <= az_deg <= AZIMUTH_DEADZONE_DEG[1]:
+       az_deg = random.uniform(*AZIMUTH_RANGE_DEG)
+
+   az = math.radians(az_deg)
+   el = math.radians(el_deg)
+
+   offset = (dist * math.cos(el) * math.cos(az)) * forward \
+            + (dist * math.cos(el) * math.sin(az)) * right \
+            + (dist * math.sin(el)) * up
+   cam_pos = cluster_center + offset
+
+   view_matrix = Gf.Matrix4d().SetLookAt(cam_pos, cluster_center, WORLD_UP)
+   cam_to_world = view_matrix.GetInverse()
+   return cam_pos, cam_to_world, dist, az_deg, el_deg
 
 
-    offset = (dist * math.cos(el) * math.cos(az)) * forward \
-             + (dist * math.cos(el) * math.sin(az)) * right \
-             + (dist * math.sin(el)) * up
-    cam_pos = cluster_center + offset
-
-
-    view_matrix = Gf.Matrix4d().SetLookAt(cam_pos, cluster_center, WORLD_UP)
-    cam_to_world = view_matrix.GetInverse()
-    return cam_pos, cam_to_world, dist, az_deg, el_deg
 
 
 
