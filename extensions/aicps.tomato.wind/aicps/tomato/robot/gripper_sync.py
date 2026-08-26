@@ -72,6 +72,18 @@ _gripper_root = None
 _articulation = None
 _update_sub = None
 _ready = False
+_warned_none_position = False
+
+def _warn_once_none_position():
+    global _warned_none_position
+    if not _warned_none_position:
+        print("gripper_sync: get_joint_positions() returned None this frame "
+              "(likely a transient physics-view invalidation, e.g. during a "
+              "Replicator render step) -- skipping, will keep retrying silently.")
+        _warned_none_position = True
+
+
+
 
 
 def _strip_mimic_apis():
@@ -99,9 +111,19 @@ def _on_update(e):
     """Runs every simulation frame while the sync loop is active."""
     if _articulation is None:
         return
-    master_pos_rad = _articulation.get_joint_positions(
+
+    master_pos = _articulation.get_joint_positions(
         joint_indices=np.array([MASTER_DOF_INDEX])
-    ).reshape(-1)[0]
+    )
+    if master_pos is None:
+        # Physics tensor simulationView transiently invalidated -- confirmed
+        # this session to happen during Replicator's render step
+        # (rep.orchestrator.step_async), not a permanent failure. Skip this
+        # frame rather than crash; log once so it's visible without spamming
+        # every single frame.
+        _warn_once_none_position()
+        return
+    master_pos_rad = master_pos.reshape(-1)[0]
 
     follower_targets = np.array([
         master_pos_rad * FOLLOWER_GEARING[name]
@@ -112,6 +134,9 @@ def _on_update(e):
         positions=follower_targets,
         joint_indices=np.array(FOLLOWER_DOF_INDICES)
     )
+
+
+
 
 
 async def _deferred_start():

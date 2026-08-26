@@ -11,3 +11,12 @@ DEFAULT_MIN_ANGLE_X = -5.0
 DEFAULT_MAX_ANGLE_X = 5.0
 DEFAULT_MIN_ANGLE_Z = -5.0
 DEFAULT_MAX_ANGLE_Z = 5.0
+
+
+ROTATION_OP_SUFFIX = "windRig"  # tags ops WE author on a pedicel/leaf's own
+                                  # prim, distinct from GLTF-imported ops.
+                                  # Do not rename once poses exist that were
+                                  # generated under this tag.
+
+
+

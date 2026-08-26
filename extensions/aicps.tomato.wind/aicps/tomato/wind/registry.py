@@ -23,7 +23,8 @@ class PlantRegistry:
         self.pedicels = []  # [pedicel_1, pedicel_2....]
         self.leaves = []
 
-    def build(self):
+    # dead under new scheme 
+    def build(self): 
         """Populate the registry."""
         self.pedicels.clear()
         self.leaves.clear()

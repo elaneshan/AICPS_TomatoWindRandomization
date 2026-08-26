@@ -11,26 +11,6 @@ tiny end-effector motion). That's exactly the failure mode reported from
 real-hardware testing (arm extended, loses motion). This script measures
 that directly instead of guessing a "safe" joint-angle range.
 
-THE CONCEPT, IN PLAIN TERMS:
-The Jacobian at a given joint configuration answers: "if I wiggle each
-joint a tiny bit, how much does the end effector actually move/rotate?"
-Near a singularity, SOME direction of end-effector motion becomes nearly
-impossible no matter how the joints move -- the Jacobian becomes
-"degenerate" in that direction. We don't have direct access to MoveIt's
-internal Jacobian from this script, so we measure it ourselves: nudge
-each joint by a tiny amount, ask MoveIt's FK service where Link6 ends up,
-and the resulting pose-change-per-joint-nudge IS the Jacobian, built one
-column at a time (a numerical/finite-difference Jacobian).
-
-From that 6x6 Jacobian we report two numbers:
-  - manipulability index (product of singular values, a.k.a. Yoshikawa's
-    measure): an overall "how much can the end effector move in any
-    direction" score. Goes to 0 exactly at a true singularity.
-  - min singular value: the SINGLE worst direction -- often more
-    interpretable than the index alone, since it directly answers "is
-    there some specific direction the arm has nearly lost the ability to
-    move in," rather than an averaged score.
-
 THIS SCRIPT DOES NOT FILTER/REJECT ANYTHING YET -- it only measures and
 reports. Per this project's own repeated pattern (v8 SS3.2 trellis
 tolerance, v13 SS1.6 drive tuning): look at the real distribution of

@@ -29,9 +29,7 @@ JOINT_NAMES = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
 # action_ns is "follow_joint_trajectory" -> full action name below.
 ACTION_NAME = "/cr3_group_controller/follow_joint_trajectory"
 
-# Generous first-guess time budget per goal, not tuned. Same
-# "start conservative, tune from observed behavior" pattern as v7's
-# drive-stiffness placeholders -- adjust once you've watched it run.
+
 TIME_TO_REACH_SEC = 3.0
 
 # Extra wait after the action reports SUCCEEDED, before treating the pose

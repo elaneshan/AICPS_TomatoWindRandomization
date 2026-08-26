@@ -1,9 +1,9 @@
 import random, math
 from pxr import Usd, UsdGeom, Gf
 
-CLUSTER_ROOT = "/World/Tomato_Cluster_Assembly"
+CLUSTER_ROOT = "/World/Cluster/Tomato_Cluster/Tomato_Cluster_Assembly"
 CAMERA_PATH = "/World/OverviewCam"
-BACKGROUND_PATH = "/World/background_plane_geo"
+BACKGROUND_PATH = "/World/Cluster/Tomato_Cluster/background_plane_geo"
 
 WORLD_UP = Gf.Vec3d(0, 0, 1)  # Z-up
 
@@ -115,12 +115,16 @@ def randomize_overview_camera(
     set_look_at(UsdGeom.Xformable(camera_prim), position, target)
 
     return {
-        "position": position, "target": target,
+        "position": [position[0], position[1], position[2]],
+        "target": [target[0], target[1], target[2]],
         "azimuth_deg": math.degrees(azimuth),
         "elevation_deg": math.degrees(elevation),
         "distance": distance,
         "front_azimuth_deg": front_azimuth_deg,
     }
+
+
+
 
 
 def frame_has_visible_fruit(stage, camera_path=CAMERA_PATH, cluster_root=CLUSTER_ROOT):

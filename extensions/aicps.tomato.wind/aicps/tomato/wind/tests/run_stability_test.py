@@ -36,7 +36,7 @@ rig = rig_module.PlantRig(stage)
 rig.build()
 
 controller = transform.TransformController(stage)
-trellis_prim = stage.GetPrimAtPath("/World/Trellis")
+trellis_prim = stage.GetPrimAtPath("/World/Cluster/Tomato_Cluster/Trellis")
 leaf_prims = [l.prim for l in rig.leaves]
 checker = collisions_module.CollisionChecker(stage, environment_prim=trellis_prim, leaf_prims=leaf_prims)
 checker.capture_baselines(rig)

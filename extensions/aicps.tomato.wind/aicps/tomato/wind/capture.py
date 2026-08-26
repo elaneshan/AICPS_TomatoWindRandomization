@@ -57,7 +57,7 @@ def label_scene_for_segmentation(rig):
         leaf_count += 1
 
     # rachis: add here, e.g.
-    rachis_prim = rig.stage.GetPrimAtPath("/World/Tomato_Cluster_Assembly/Peduncle/Rachis")
+    rachis_prim = rig.stage.GetPrimAtPath("/World/Cluster/Tomato_Cluster/Tomato_Cluster_Assembly/Peduncle/Rachis")
     if rachis_prim.IsValid():
         add_labels(rachis_prim, labels=["rachis"], instance_name="class")
 
