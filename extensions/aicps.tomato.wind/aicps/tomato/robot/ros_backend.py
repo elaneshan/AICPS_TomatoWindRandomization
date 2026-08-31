@@ -56,6 +56,10 @@ class ROSBackend(ManipulationBackend):
         # return shape exactly, no unwrapping needed here.
         return self._mailbox.sample_target()
 
+    def sample_standoff_target(self):
+       return self._mailbox.sample_standoff_target()
+
+
     def capture_observation(self, episode_id):
         # Same -- returned as-is, matches episode_capture.capture_episode_frame()'s
         # {"output_dir": ...} shape (or whatever else it eventually returns).

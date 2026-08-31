@@ -13,6 +13,57 @@ import grasp_offset
 
 WORLD_UP = Gf.Vec3d(0, 0, 1)
 
+STANDOFF_FRACTION = 0.23   
+STANDOFF_MIN_M = 0.12
+STANDOFF_MAX_M = 0.25
+
+
+
+
+def sample_standoff_target(rig, robot_base_prim, gripper_target_deg=-5.5):
+    candidates = list(rig.pedicels) + list(rig.leaves)
+    if not candidates:
+        return None
+    item = random.choice(candidates)
+
+
+    robot_base_pos = UsdGeom.Xformable(robot_base_prim).ComputeLocalToWorldTransform(
+        Usd.TimeCode.Default()
+    ).ExtractTranslation()
+
+
+    grasp_pos = [item.hinge_point[0], item.hinge_point[1], item.hinge_point[2]]
+    grasp_quat = _approach_orientation(item.hinge_point, robot_base_pos)
+
+
+    grasp_dist_from_base = (Gf.Vec3d(*grasp_pos) - robot_base_pos).GetLength()
+    standoff_offset_m = max(STANDOFF_MIN_M, min(STANDOFF_MAX_M, grasp_dist_from_base * STANDOFF_FRACTION))
+
+
+    link6_pos, link6_quat = grasp_offset.grasp_target_to_link6_target(
+        grasp_pos, grasp_quat, offset_m=standoff_offset_m
+    )
+
+
+    return {
+        "target_prim_name": item.prim.GetName(),
+        "target_type": "pedicel" if item in rig.pedicels else "leaf",
+        "grasp_position_xyz": grasp_pos,
+        "grasp_quat_xyzw": grasp_quat,
+        "position_xyz": link6_pos,
+        "quat_xyzw": link6_quat,
+        "gripper_target_deg": gripper_target_deg,
+        "is_standoff": True,
+        "standoff_offset_m": standoff_offset_m,
+    }
+
+
+
+
+
+
+
+
 
 def _approach_orientation(target_pos, robot_base_pos):
     """

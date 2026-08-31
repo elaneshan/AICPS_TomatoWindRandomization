@@ -24,7 +24,7 @@ from pxr import Usd as Usd
 
 
 SEED = int(os.environ.get("SAMPLER_SEED", "42"))
-random.seed(SEED)
+# random.seed(SEED)
 
 
 

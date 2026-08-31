@@ -27,7 +27,7 @@ def run_episode(backend, episode_id, manip_threshold=None, metadata_log=None):
         backend.randomize_scene()
 
 
-        target = backend.sample_target()
+        target = backend.sample_standoff_target()
         record["target"] = target
 
 
@@ -52,7 +52,7 @@ def run_episode(backend, episode_id, manip_threshold=None, metadata_log=None):
             return record
 
 
-        grip_success, grip_info = backend.move_gripper(target.get("gripper_target_deg", -20.0))
+        grip_success, grip_info = backend.move_gripper(-37.24)  # open gripper fully
         record["move_gripper"] = grip_info
         if not grip_success:
             record["status"] = "gripper_failed"
@@ -124,8 +124,7 @@ if __name__ == "__main__":
     try:
         run_batch(
             backend,
-            n_episodes=1,  # start with 1 -- per v16 SS6's own testing plan,
-                            # don't jump to a full batch on first run
+            n_episodes=10,  # start with 1 
             manip_threshold=0.05,
             metadata_path="episode_metadata.json",
         )

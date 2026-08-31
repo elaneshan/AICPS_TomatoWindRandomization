@@ -194,6 +194,11 @@ class MailboxClient(Node):
     def sample_target(self):
         return self.request("sample_target", {})
 
+    def sample_standoff_target(self):
+        return self.request("sample_standoff_target", {})
+
+
+
     def capture_observation(self, episode_id, timeout_sec=60.0):
         return self.request("capture", {"episode_id": episode_id}, timeout_sec=timeout_sec)
 

@@ -1,0 +1,121 @@
+[
+  {
+    "episode_id": 0,
+    "status": "ok",
+    "target": {
+      "target_prim_name": "foliage_leaf_04",
+      "target_type": "leaf",
+      "grasp_position_xyz": [
+        -0.02404677443835246,
+        -0.6164085386489377,
+        0.4704991037870377
+      ],
+      "grasp_quat_xyzw": [
+        0.4575555782983081,
+        -0.008921443245107645,
+        -0.017333132199233738,
+        0.8889673015059041
+      ],
+      "position_xyz": [
+        -0.018516038166358995,
+        -0.47463455164027213,
+        0.3691843226140432
+      ],
+      "quat_xyzw": [
+        0.4575555782983081,
+        -0.008921443245107645,
+        -0.017333132199233738,
+        0.8889673015059042
+      ],
+      "gripper_target_deg": -5.5,
+      "is_standoff": true,
+      "standoff_offset_m": 0.17434201249318929,
+      "seed_used": "zero"
+    },
+    "joint_positions": [
+      1.1961846413974309,
+      0.25054473290607204,
+      1.2900746223063801,
+      0.9534784353672137,
+      1.2994420745387794,
+      0.2000019688285156
+    ],
+    "manipulability": {
+      "manipulability_index": 0.021456417186138554,
+      "min_singular_value": 0.1127582458717554,
+      "condition_number": 16.427566255154357
+    },
+    "execute_trajectory": {
+      "error_code": 0
+    },
+    "move_gripper": {},
+    "observation": {
+      "captured": true,
+      "episode_dir": "/home/aicps/manipulation_episodes/episode_0000",
+      "files": [
+        "distance_to_camera_0000.npy"
+      ],
+      "frame_index": 0
+    }
+  },
+  {
+    "episode_id": 1,
+    "status": "ok",
+    "target": {
+      "target_prim_name": "foliage_leaf_02",
+      "target_type": "leaf",
+      "grasp_position_xyz": [
+        -0.03718258306470823,
+        -0.5739403247982786,
+        0.5100989293169449
+      ],
+      "grasp_quat_xyzw": [
+        0.4235563125955231,
+        -0.013705766963756116,
+        -0.029294155741376053,
+        0.9052922480899849
+      ],
+      "position_xyz": [
+        -0.028630502849740096,
+        -0.44193404210572373,
+        0.3996761505721339
+      ],
+      "quat_xyzw": [
+        0.4235563125955231,
+        -0.013705766963756118,
+        -0.029294155741376053,
+        0.9052922480899849
+      ],
+      "gripper_target_deg": -5.5,
+      "is_standoff": true,
+      "standoff_offset_m": 0.1723136292114917,
+      "seed_used": "zero"
+    },
+    "joint_positions": [
+      1.1440809869270099,
+      0.11806957633200564,
+      1.3720422090356108,
+      0.9227778493296328,
+      1.295439055360315,
+      0.23808805167194383
+    ],
+    "manipulability": {
+      "manipulability_index": 0.020140687573844122,
+      "min_singular_value": 0.11753081663393017,
+      "condition_number": 15.743664619901274
+    },
+    "execute_trajectory": {
+      "error_code": 0
+    },
+    "move_gripper": {},
+    "observation": {
+      "captured": true,
+      "episode_dir": "/home/aicps/manipulation_episodes/episode_0001",
+      "files": [
+        "distance_to_camera_0001.npy",
+        "rgb_0001.png"
+      ],
+      "frame_index": 1
+    }
+  }
+]

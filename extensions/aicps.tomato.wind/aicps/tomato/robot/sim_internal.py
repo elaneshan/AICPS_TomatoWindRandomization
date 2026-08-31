@@ -1,21 +1,9 @@
 """
 sim_internal.py -- Isaac-Sim/Kit-only manipulation internals.
-
-This is NOT a ManipulationBackend implementation. It's the set of
-methods the (not-yet-built) mailbox listener will call inside Kit to
-service requests from the outside process. Split out of the old
-sim_backend.py per hand-off v16 SS5's mapping table:
-
-  "sim-only parts stay as-is, running inside Kit as the mailbox
-   listener's dependencies" -- randomize_scene, the USD/rig
-   construction, sample_target, move_gripper (via gripper_sync),
-   capture_observation.
-
-CRITICAL: do not import rclpy or any ROS2 message
-package (moveit_msgs, sensor_msgs, etc). 
 """
 import sys
 import asyncio
+import os
 
 ROBOT_PKG_DIR = "/home/aicps/AICPS_TomatoWindRandomization/extensions/aicps.tomato.wind/aicps/tomato/robot"
 WIND_PKG_DIR = "/home/aicps/AICPS_TomatoWindRandomization/extensions/aicps.tomato.wind/aicps/tomato/wind"
@@ -24,10 +12,10 @@ for p in (ROBOT_PKG_DIR, WIND_PKG_DIR):
         sys.path.insert(0, p)
 
 import omni.usd as usd
+import omni.replicator.core as rep
 
-# Kit-only, zero rclpy/ROS2 dependency -- confirmed via code inspection,
-# hand-off v16 SS3.
 import gripper_sync
+import wrist_camera_lookat
 
 import aicps.tomato.wind.rig as rig_module
 import aicps.tomato.wind.collisions as collisions_module
@@ -40,9 +28,12 @@ import episode_capture
 
 ROBOT_BASE_PATH = "/World/cr3/Geometry/world/dummy_link/base_link"
 
-# From test_pipeline_demo.py -- verified against the viewport per that
-# file's own comment. Lives here (not hardcoded per-call) since it's a
-# property of THIS cluster asset, same lifetime as the rig itself.
+EYE_IN_HAND_CAMERA_PATH = (
+    "/World/cr3/Geometry/world/dummy_link/base_link/Link1/Link2/Link3/"
+    "Link4/Link5/Link6/Gripper/Geometry/gripper_base_link/EyeInHand_Camera"
+)
+CAPTURE_RESOLUTION = (1280, 720)
+
 LEAF_PAIRING_OVERRIDES = {
     "foliage_leaf_01": "Pedicel_01",
     "foliage_leaf_07": "Pedicel_01",
@@ -58,19 +49,23 @@ GRIPPER_READY_TIMEOUT_SEC = 10.0
 
 class SimInternal:
     """
-    Owns the rig/checker/controller/gripper-sync state inside Kit. One
-    instance per running session -- the (future) mailbox listener
-    constructs this once and calls methods on it per request, rather
-    than rebuilding any of this per-request (which would re-trigger
-    the same module-level-caching class of bug flagged in v13 SS1.4 --
-    the fix there was "build at use-time, not import-time", not
-    "build fresh every single call").
+    Owns the rig/checker/controller/gripper-sync state inside Kit.
+
+    CONSTRUCTION IS TWO-PHASE, on purpose:
+      1. __init__ (sync) -- builds the rig/checker/controller, kicks off
+         gripper_sync.start_gripper_sync() (which finishes asynchronously
+         a few frames later), and does NOT touch render_product/writer.
+      2. await setup_capture() -- must be called AFTER gripper_ready()
+         succeeds. Builds the persistent render_product/writer only once
+         gripper_sync's own fragile startup window has fully passed.
+
+    The caller (mailbox_listener.py) is responsible for calling both
+    phases in order before servicing any requests.
     """
 
     def __init__(self, capture_output_dir="/home/aicps/manipulation_episodes"):
         self.stage = usd.get_context().get_stage()
 
-        # Mirrors test_pipeline_demo.py's setup sequence exactly.
         self.rig = rig_module.PlantRig(self.stage, leaf_pairing_overrides=LEAF_PAIRING_OVERRIDES)
         self.rig.build()
 
@@ -84,29 +79,27 @@ class SimInternal:
             raise RuntimeError(f"No prim at {ROBOT_BASE_PATH}")
 
         self.capture_output_dir = capture_output_dir
+        os.makedirs(self.capture_output_dir, exist_ok=True)
 
-        # --- FIX (this session) -------------------------------------
-        # The old sim_backend.py never called start_gripper_sync() at
-        # all. move_gripper() -> gripper_sync.set_gripper_target_deg()
-        # hard-requires the sync loop to already be running and ready
-        # (it raises RuntimeError otherwise, by design -- see
-        # gripper_sync.py's own docstring) -- so the very first
-        # move_gripper() call in ANY episode would have raised, every
-        # single time, before this fix.
-        #
-        # start_gripper_sync() itself finishes ASYNCHRONOUSLY (a few
-        # real frames after Play, per its own _deferred_start()) -- so
-        # kicking it off here is necessary but not sufficient. Callers
-        # must `await gripper_ready()` once, after construction, before
-        # trusting the first move_gripper() call in a fresh session.
         gripper_sync.start_gripper_sync()
+        wrist_camera_lookat.start_camera_lookat()
+
+        # NOT built here -- see setup_capture(). Left None so any
+        # accidental early use of capture_observation() fails loudly
+        # (AttributeError on None) rather than silently doing something
+        # wrong.
+        self._render_product = None
+        self._writer = None
+        self._next_frame_index = 0
+        self._capture_ready = False
 
     # --- called by the mailbox listener, one request type each --------
 
     async def gripper_ready(self, timeout_sec=GRIPPER_READY_TIMEOUT_SEC):
         """Blocks (async, polling) until gripper_sync reports ready, or
-        raises on timeout. Call once after construction, before the
-        listener starts servicing move_gripper requests."""
+        raises on timeout. Call once after construction, before
+        setup_capture() and before the listener starts servicing
+        move_gripper requests."""
         elapsed = 0.0
         poll_interval = 0.1
         while not gripper_sync.is_ready():
@@ -119,6 +112,23 @@ class SimInternal:
                     f"referenced into this stage."
                 )
 
+    async def setup_capture(self):
+        self._render_product = rep.create.render_product(EYE_IN_HAND_CAMERA_PATH, CAPTURE_RESOLUTION)
+        self._render_product.hydra_texture.set_updates_enabled(False)
+
+        self._writer = rep.writers.get("BasicWriter")
+        self._writer.initialize(
+            output_dir=self.capture_output_dir, rgb=True, distance_to_camera=True
+        )
+        self._writer.attach([self._render_product])
+
+        self._capture_ready = True
+        print("SimInternal: capture render_product/writer ready.")
+
+
+
+
+
     def randomize_scene(self):
         return scene_module.randomize_scene(
             self.stage, self.rig, self.checker, self.controller_tool,
@@ -130,6 +140,14 @@ class SimInternal:
             raise RuntimeError("rig has no pedicels or leaves -- did rig.build() run on the right stage?")
         return target
 
+    def sample_standoff_target(self):
+       target = manipulation_targets.sample_standoff_target(self.rig, self.robot_base_prim)
+       if target is None:
+           raise RuntimeError("rig has no pedicels or leaves -- did rig.build() run on the right stage?")
+       return target
+
+
+
     def move_gripper(self, target_deg):
         if not gripper_sync.is_ready():
             raise RuntimeError(
@@ -140,19 +158,40 @@ class SimInternal:
         return True, {}
 
     def open_gripper(self):
-        """Used by the reset flow -- open BEFORE retracting, so a grasped
-        object isn't dragged as the arm moves away (same reasoning as the
-        original SimBackend.reset())."""
         return self.move_gripper(-37.24)
 
     async def capture_observation(self, episode_id):
-        # This object lives inside Kit, so a plain `await` here runs on
-        # Kit's OWN already-running event loop -- correct, and avoids the
-        # untested asyncio.get_event_loop().run_until_complete(...) pattern
-        # the old SimBackend used (flagged as a real unknown in v14 SS3.5;
-        # calling run_until_complete() on an already-running loop typically
-        # raises "This event loop is already running"). The mailbox
-        # listener will call this as `await sim.capture_observation(...)`
-        # from its own async dispatch.
-        return await episode_capture.capture_episode_frame(self.capture_output_dir, episode_id)
+        if not self._capture_ready:
+            raise RuntimeError(
+                "SimInternal.setup_capture() has not completed -- capture "
+                "requests cannot be serviced yet."
+            )
+
+        frame_index = self._next_frame_index
+        self._next_frame_index += 1
+
+        result = await episode_capture.capture_episode_frame(
+            self._render_product, self._writer, self.capture_output_dir, episode_id, frame_index
+        )
+        result["frame_index"] = frame_index
+        print(f"SimInternal: captured frame_index={frame_index} for "
+              f"episode_id={episode_id}, dir={result['episode_dir']}")
+        return result
+
+
+
+
+    async def shutdown(self):
+        if self._capture_ready:
+            await rep.orchestrator.wait_until_complete_async()
+            self._writer.detach()
+            self._render_product.destroy()
+            self._capture_ready = False
+        gripper_sync.stop_gripper_sync()
+        wrist_camera_lookat.stop_camera_lookat()
+
+
+
+
+
 
